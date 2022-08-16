@@ -1,0 +1,26 @@
+---
+import BaseHead from '../components/BaseHead.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import { SITE_TITLE, SITE_DESCRIPTION } from '../config';
+---
+
+<!DOCTYPE html>
+<html lang="en-us">
+	<head>
+		<BaseHead title={SITE_TITLE} description={SITE_DESCRIPTION} />
+	</head>
+	<body>
+		<Header title={SITE_TITLE} />
+		<main>
+			<h1>Welcome, all!</h1>
+			<p>
+				If you're just here to browse, don't be shy. If you're here for my blog, wow are you actually?
+			</p>
+			<p>
+				My Twitter and GitHub are at the top. Here's a link to my <a href="https://1drv.ms/b/s!Ap6vzaIS5CKAg7gxdG89NFCRtkraOQ?e=6bekjJ">Resumé</a>.
+			</p>
+		</main>
+		<Footer />
+	</body>
+</html>
