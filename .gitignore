@@ -33,4 +33,6 @@ pnpm-debug.log*
 
 # vscode
 .vscode/
->>>>>>> f3c9503 (Changed to Astro with Svelte.)
+
+# incomplete
+drafts/
