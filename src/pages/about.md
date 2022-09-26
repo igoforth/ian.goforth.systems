@@ -6,7 +6,7 @@ updatedDate: "August 16 2022"
 heroImage: "/profile-about.jpg"
 ---
 
-My name is Ian Goforth and I'm a self-proclaimed Security Researcher. I graduate(d) from Mississippi State (Go Dawgs!) with a degree in Cyber Security & Operations in December 2022. In my offtime I like to read, watch anime, take walks, and practice MMA. I'm a Myers-Briggs ENTJ, Enneagram Type 3, and my social security number is... just kidding.
+My name is Ian Goforth and I'm a security researcher. I graduate(d) from Mississippi State (Go Dawgs!) with a degree in Cyber Security & Operations in December 2022. In my off-time I like to read, watch anime, take walks, and practice MMA. I'm a Myers-Briggs ENTJ, Enneagram Type 3, and my social security number is... just kidding.
 
 My philosophy is this: life is all about learning. Furthermore, the wise integrate life's lessons in ways the foolish can't or won't. For my entire life I've wanted to become like that, wise with a dose of self-discipline. I've failed many times. I will continue to fail. But with each failure brings learning, which is itself a success.
 
