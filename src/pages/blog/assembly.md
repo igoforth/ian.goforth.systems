@@ -68,3 +68,5 @@ I have a reading list too. Most of these were added to either grasp the specific
 ## Epilogue
 
 There are doubtlessly peculiarities about how I write assembly. I'm self-taught and could have picked up bad practices leading to <u>badly written assembly</u>. I open myself to the judgement of my more experienced peers. Please contact me if you notice something! I plan to continue learning and experimenting with assembly in future projects. I hope that sharing my experiences and the practices I've developed so far can be helpful to others on the same journey.
+
+Image by [rmRadev](https://www.deviantart.com/rmradev/art/Early-morning-934367339).
