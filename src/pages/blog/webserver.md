@@ -3,7 +3,7 @@ layout: "../../layouts/BlogPost.astro"
 title: "A Web Server in x86_64 NASM"
 description: "Design, features, and obstacles encountered when developing a web server in x86_64 NASM."
 pubDate: "Jan 24 2023"
-heroImage: "/rmRadev-Autumn-Tree.jpg"
+heroImage: "/rmRadev-Early-Morning.jpg"
 ---
 
 ## Introduction
@@ -14,7 +14,7 @@ Assembly forces you to be intentional because, unlike any other language, you ma
 
 ## Design Decisions
 
-![One Does Not Simply Code in Assembly](/78d8ym.jpg)
+[One Does Not Simply Code in Assembly](https://imgflip.com/i/78d8ym)
 
 The project structure is organized in a standard way. The main folder has subfolders src/ obj/ and bin/ each containing their corresponding source, object, and executable files. Organizing the source files was a different story. The gist is, I separated components into separate files and refactored code so you rarely see the same functionality twice. This challenged me to depart from the monolithic style of my [old assembly web server](https://github.com/igoforth/codesamples/blob/master/x86-64/getpostserver.s) and discern how I can squeeze more purpose out of fewer lines of code.
 
@@ -28,12 +28,11 @@ int main( int argc, char *argv[] ) { /* code */ }
 
 GCC requires the program entrypoint to be the label "main" because it uses _start to perform [crt0](https://en.wikipedia.org/wiki/Crt0). One of the first things I learned is how to handle my own arguments. In this case, since I'm using Linux (assembling with NASM), they were passed to me on the stack as dictated by the System V ABI. See a snippet of _start from main.asm below.
 
-```nasm
+```asm
 _start:
         mov     eax,DWORD [rsp]     ; arg value
         cmp     rax,3               ; check for 3 args
-        ; according to convention, we can assume r12 is not changed by callee,
-        ; so we use it to keep track of error codes (could also use rbx?)
+        ; according to convention, we can assume r12 is not changed by callee, so we use it to keep track of error codes (could also use rbx?)
         mov     r12,1               ; arguments error: 1
         jne     _end
 
@@ -47,14 +46,9 @@ You might also notice that I use the register r12 to hold my error codes. Accord
 
 The program utilizes a parent/child process architecture to speed up client request handling. This takes the form of a "while true" loop starting at the "listen" label in main.asm.
 
-```nasm
+```asm
 listen: ; loop connections
-        mov     rax,288             ; operator accept4 (for nonblocking capabilities).
-        ; Only failure case I can think of is a situation where the connection
-        ; isn't closed by the client immediately. Or, if the client induces 
-        ; a server segfault by causing a blocking write. After the initial request,
-        ; our program responds and closes the connection. I'll worry about that
-        ; after my initial implementation.
+        mov     rax,288             ; operator accept4 (for nonblocking capabilities). Only failure case I can think of is a situation where the connection isn't closed by the client immediately. Or, if the client induces a server segfault by causing a blocking write. After the initial request, our program responds and closes the connection. I'll worry about that after my initial implementation.
         movzx   rdi,BYTE [rbp-0x1]  ; socket fd
         xor     rsi,rsi             ; any addr
         xor     rdx,rdx             ; null addrlen
@@ -77,7 +71,7 @@ I chose to use the [accept4() syscall](https://man7.org/linux/man-pages/man2/acc
 
 The SOCK_NONBLOCK flag is useful because of my web server design. The server receives a single request, fulfills it, then closes the connection. Because the client should only ever write to the socket once, we can implement a subroutine that empties the socket of any data it didn't need simply by having the kernel read() until it returns an error.
 
-```nasm
+```asm
 flush: ; this subroutine reads from the socket to /dev/null
 ; rax: read operator / result
 ; rdi: connection fd
@@ -104,13 +98,13 @@ If the flag was not set, the kernel would block execution flow until it receives
 
 ### Network Byte Order and NASM Structs
 
-![Intel Programmer](/78e09b.jpg)
+[Intel Programmer](https://imgflip.com/i/78e09b)
 
 A long time ago, the powers that be decreed that all data exchanged between hosts should be big-endian, lovingly referred to as "network byte order." This was no different from the big-endian "host byte order" used by IBM, Motorola, etc but converse to Intel architecture which used little-endian to sort bytes. C has functions to help us with this. Of course, I chose to not use them.
 
 Before the server can create a socket and listen on a port, it must first translate the command line arguments given by the user into something the kernel can understand. The _conv function does this with the ip_aton and pt_atons subroutines and a handy NASM preprocessor feature.
 
-```nasm
+```asm
 ip_aton:                            ; ip ascii to network order (big-endian)
 ; rax: accumulator
 ; rdi: ascii pointer
@@ -186,7 +180,7 @@ You might ask, "Why go through all these steps and bother with delimiters if you
 
 Part of the flexibility of _read comes from how it communicates with the rest of the program. It does this through the dx register (the 16-bit register of 64-bit rdx) where it manages its state. I have taken special care to preserve dx over the child's lifecycle. I have commented a legend of its functionality below.
 
-```nasm
+```asm
 ; dh:  offset
 ; dl:  handle + read i/o control
 ; 0000 0001 read security (1)
@@ -205,7 +199,7 @@ Bringing the web server's capabilities to the present day is not a task that can
 
 The goal of _verify in verify.asm is to prevent path traversal when parsing file paths from HTTP requests. It does this through a small (but expandable) ruleset. The two rules given below either totally restrict, or allow only once, bytes that can manipulate an open() syscall. An example of the latter would be the forward slash "/" and period ".". By allowing only one forward slash and period, we should be able to prevent open() from leaving the directory the web server was run from.
 
-```nasm
+```asm
 ; Forbidden in paths:
 ; - Spaces " " (0x20) (By nature of the program, this will just break things)
 ; - More than one dot "." (0x2E)
@@ -221,13 +215,13 @@ r2:     db      0x5C,0x3A,0x2A,0x3F,0x25,0x22,0x3C,0x3E,0x7C,0       ; never \:*
 
 At the moment, each ruleset has its own subroutine. This can be refactored later to more easily support additional rulesets. Since _verify keeps track of state with dx, we solve the problem where we see one "." or "/" in the first 32 bytes, and additional characters in subsequent read loops. The flush subroutine resets the ruleset. If a request violates any rule, a 404 is sent to the client.
 
-![HTTP/1.1 404 Not Found](/78ij7e.jpg)
+[HTTP/1.1 404 Not Found](https://imgflip.com/i/78ij7e)
 
 ### Effective Addressing and Error Handling
 
 I am the happiest with where _error in error.asm is at because it's the easiest to extend. As mentioned previously, the r12 register is used to keep track of the program error code. Error codes 1-5 affect the parent and kill the server. Error codes 6-8 affect the child and indicate problems with the client. Initially, I had the unique error strings 16 byte aligned in .rodata as seen in the amalgamation below.
 
-```nasm
+```asm
 lea rsi,[section.rodata.start+(rax-1)*32]
 
 section .rodata align=16
@@ -245,7 +239,7 @@ error5: db      "Error: Listen error",0xa,0
 
 I'll admit, it was creative. But, it didn't work because it's not a valid NASM effective address. Not to mention it limits how long my error messages can be. The revised implementation is below.
 
-```nasm
+```asm
 dec     rax
 lea     rdx,[ep1]
 mov     rsi,[rdx+rax*8]
@@ -279,20 +273,18 @@ Deciding what functionality to separate from main.asm into a component, from a c
 
 ### I've Seen Too Much! (Read Buffer)
 
-#### My implementation
+**My implementation**
 The read syscall takes 32 bytes at a time into a buffer 256 bytes in size. I utilize the offset to describe either how full the buffer is or the location of the delimiter. This makes the memory footprint incredibly small because the program can efficiently search for and use only the data it needs while discarding the rest.
 
-#### The obstacle
+**The obstacle**
 If there is a read that exceeds the delimited segment (indicated by offset), there will be extra content in the buffer up to the read size. This means that if the buffer is cleared incorrectly before subsequent reads, some data will be lost.
 
-#### How I overcame it
+**How I overcame it**
 The shift subroutine will take any content from offset to the closest null and bring it to the beginning of the buffer. We zero out unused buffer content after every shift. This is because an offset not indicating the delimiter must be null. Finally, it will set the offset to the end of the preserved bytes. This means the offset again indicates buffer fullness instead of the delimiter. The program only needs to understand that in the previous read the delimiter was found. It requires no knowledge of the state of the buffer beyond the value of the offset.
 
-```nasm
+```asm
 shift:  ; this subroutine brings all bytes from offset to null to front of buffer
-; we are considering the potential that we read more into the buffer than it
-; takes to find the delimiter (specified by the offset), so we save the extra
-; content past offset for the next read
+; we are considering the potential that we read more into the buffer than it takes to find the delimiter (specified by the offset), so we save the extra content past offset for the next read
 ; r8:  offset pointer
 ; r9:  buf pointer
 ; r10: general register
@@ -312,9 +304,7 @@ shift:  ; this subroutine brings all bytes from offset to null to front of buffe
         cmp     r10,223
         jge     .zero               ; if buffer > BUF_SIZE - MAX_READ, just zero it
         mov     r8b,BYTE [_buf+r10]
-        test    r8b,r8b             ; if buffer offset value is not zero, we need to
-        ; add one (presuming here the value is the delimiter) to start properly
-        ; at next section
+        test    r8b,r8b             ; if buffer offset value is not zero, we need to add one (presuming here the value is the delimiter) to start properly at next section
         jz      .i
         inc     r10
 .i:     lea     r8,[_buf+r10]
@@ -358,27 +348,27 @@ _read knows to align (shift subroutine) if
 OR
 2. The offset is greater than BUF_SIZE - MAX_READ
 
-#### Failure case(s)
+**Failure case(s)**
 - The user sends multiple delimiters (like whitespace 0x20) sequentially. The handler is prepared to read from buffer but the offset is 0. In this case, the program should error.
 - The handler has to call _read multiple times for anything other than DATA. A path SHOULD be read in one call, because linux max is 255B. DATA may be read multiple times because we can write to a socket multiple times in one response.
 - Buffer contents must be acted upon before the buffer is cleared. If, for some reason, we have content greater than buffer size that cannot be intermediately stored on the stack, our design fails.
 
-#### Alternatives I've considered
+**Alternatives I've considered**
 - Reading from a HTTP request into memory (such as the stack or a buffer) until you reach the end of the request. Then, parse the total content for methods, headers, file paths, and data. As far as I know, many web servers do this.  However, with so many memory accesses, you run the risk of slowdown because data exceeds the capacity of the L1 cache. This could mean the difference between 3-5 cycle latency and 8-20 cycle latency.[^2] In addition, you increase your attack surface because of how much data you're storing for a longer period of time.
 - Syscalling read from a HTTP request byte by byte. This allows careful allocation and parsing of strings. However, in exchange you gain "extremely" long processing time since control is given to the kernel every loop. This could mean a context switch, which is thousands of cycles.[^3] Granted, Linux may offer system calls I don't know about that tackle this efficiently.
 
 ### I Didn't Finish Sending It! (SO_LINGER)
 
-#### My implementation
+**My implementation**
 Once a GET request is verified, the file path is interpreted and opened by _get in get.asm. Finally, a descriptor is passed to the system call sendfile() to transmit to the client. Immediately after sendfile() returns, the child handling the connection exits.
 
-#### The obstacle
+**The obstacle**
 During testing I would sometimes not receive content from the server before the connection was closed. This happened nondeterministically, but most often on larger requests.
 
-#### How I overcame it
+**How I overcame it**
 It was clear that sendfile() returns early and doesn't wait for a TCP acknowledgement from the client. This is fair, as its business is to send files and not to handle a socket. It's also possible it returned immediately because the socket was nonblocking. Through an exellent suggestion from a member of the OSDev Discord, I discovered the SO_LINGER flag.
 
-```nasm
+```asm
         ; set socket option SO_LINGER
         mov     r8,8                ; struct length 8 bytes
         ; struct linger {
@@ -388,8 +378,7 @@ It was clear that sendfile() returns early and doesn't wait for a TCP acknowledg
         mov     rax,0x100000001     ; SO_LINGER struct
         push    rax
         lea     r10,[rsp]           ; set boolean to true
-        mov     rdx,13              ; SO_LINGER (wait around until all data
-        ; is sent for 200 ms even after calling exit())
+        mov     rdx,13              ; SO_LINGER (wait around until all data is sent for 200 ms even after calling exit())
         mov     rsi,1               ; SOL_SOCKET (edit socket api layer)
         xor     rax,rax
         mov     rax,54              ; operator setsockopt
@@ -398,12 +387,12 @@ It was clear that sendfile() returns early and doesn't wait for a TCP acknowledg
 
 This flag is a magic socket option that, when enabled, "a close(2) or shutdown(2) will not return until all queued messages for the socket have been successfully sent or the linger timeout has been reached."[^4] I can just exit() and let the kernel handle the rest.
 
-#### Failure case(s)
+**Failure case(s)**
 - The user expects multiple files or a complex response, which the server is not designed to handle.
 
 As a result, I didn't have to bother with nanosleep(), checking TCP status, or even closing the socket.
 
-#### Alternatives I've considered
+**Alternatives I've considered**
 - I briefly experimented with ioctl() to check the status of the TCP socket. The correct way to deal with complex non-blocking sockets is to have prior knowledge about what messages to expect. Ioctl() as a system call was designed to allow a program to check and change underlying device parameters using special encoded arguments.[^5] In our case, we used TIOCOUTQ and TIOCINQ to check the input & output queue size not sent and not acked.[^6]
 - I could've guessed how long the message would take to transmit. I would call nanosleep() for a max length of time I'm comfortable with. Obviously this method is the equivalent of bruteforcing a password hash. You shouldn't if you don't have to.
 
@@ -414,8 +403,6 @@ The right design depends on a variety of factors, such as your hardware and the 
 I do minimal research when approaching projects like this to encourage experimentation and growth. I learned so much that, over the course of the month, my latest code looked completely different from my starting code. As much as I argue for the advantages of my implementation, I only know so much. In hindsight, I held onto memory and registers too tightly for the amount of syscalls the program has.
 
 Initially, my goal was to write a server in both x86_64 Assembly and C. This was so that I could compare a single design to my implementation and what a compiler produces. While writing the C web server didn't fit into my schedule before my self-imposed deadline, I hope to continue experimenting in [Godbolt](https://godbolt.org/) and someday fully realize that vision. Please look out for additional blog posts as I look forward to giving back to the community that has done so much for me.
-
-Image by [rmRadev](https://www.deviantart.com/rmradev/art/Autumn-Tree-897142928).
 
 [^1]: [Wikipedia - Entry Point - C and C++](https://en.wikipedia.org/wiki/Entry_point#C_and_C++)
 [^2]: [How many machine cycles does it take a CPU to fetch a value from the SRAM cache](https://qr.ae/prXPs5)
