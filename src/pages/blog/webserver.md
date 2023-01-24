@@ -14,7 +14,7 @@ Assembly forces you to be intentional because, unlike any other language, you ma
 
 ## Design Decisions
 
-[One Does Not Simply Code in Assembly](https://imgflip.com/i/78d8ym)
+![One Does Not Simply Code in Assembly](/78d8ym.jpg)
 
 The project structure is organized in a standard way. The main folder has subfolders src/ obj/ and bin/ each containing their corresponding source, object, and executable files. Organizing the source files was a different story. The gist is, I separated components into separate files and refactored code so you rarely see the same functionality twice. This challenged me to depart from the monolithic style of my [old assembly web server](https://github.com/igoforth/codesamples/blob/master/x86-64/getpostserver.s) and discern how I can squeeze more purpose out of fewer lines of code.
 
@@ -104,7 +104,7 @@ If the flag was not set, the kernel would block execution flow until it receives
 
 ### Network Byte Order and NASM Structs
 
-[Intel Programmer](https://imgflip.com/i/78e09b)
+![Intel Programmer](/78e09b.jpg)
 
 A long time ago, the powers that be decreed that all data exchanged between hosts should be big-endian, lovingly referred to as "network byte order." This was no different from the big-endian "host byte order" used by IBM, Motorola, etc but converse to Intel architecture which used little-endian to sort bytes. C has functions to help us with this. Of course, I chose to not use them.
 
@@ -221,7 +221,7 @@ r2:     db      0x5C,0x3A,0x2A,0x3F,0x25,0x22,0x3C,0x3E,0x7C,0       ; never \:*
 
 At the moment, each ruleset has its own subroutine. This can be refactored later to more easily support additional rulesets. Since _verify keeps track of state with dx, we solve the problem where we see one "." or "/" in the first 32 bytes, and additional characters in subsequent read loops. The flush subroutine resets the ruleset. If a request violates any rule, a 404 is sent to the client.
 
-[HTTP/1.1 404 Not Found](https://imgflip.com/i/78ij7e)
+![HTTP/1.1 404 Not Found](/78ij7e.jpg)
 
 ### Effective Addressing and Error Handling
 
