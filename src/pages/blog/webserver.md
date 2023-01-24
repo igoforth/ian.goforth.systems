@@ -32,7 +32,8 @@ GCC requires the program entrypoint to be the label "main" because it uses _star
 _start:
         mov     eax,DWORD [rsp]     ; arg value
         cmp     rax,3               ; check for 3 args
-        ; according to convention, we can assume r12 is not changed by callee, so we use it to keep track of error codes (could also use rbx?)
+        ; according to convention, we can assume r12 is not changed by callee,
+        ; so we use it to keep track of error codes (could also use rbx?)
         mov     r12,1               ; arguments error: 1
         jne     _end
 
@@ -48,7 +49,12 @@ The program utilizes a parent/child process architecture to speed up client requ
 
 ```nasm
 listen: ; loop connections
-        mov     rax,288             ; operator accept4 (for nonblocking capabilities). Only failure case I can think of is a situation where the connection isn't closed by the client immediately. Or, if the client induces a server segfault by causing a blocking write. After the initial request, our program responds and closes the connection. I'll worry about that after my initial implementation.
+        mov     rax,288             ; operator accept4 (for nonblocking capabilities).
+        ; Only failure case I can think of is a situation where the connection
+        ; isn't closed by the client immediately. Or, if the client induces 
+        ; a server segfault by causing a blocking write. After the initial request,
+        ; our program responds and closes the connection. I'll worry about that
+        ; after my initial implementation.
         movzx   rdi,BYTE [rbp-0x1]  ; socket fd
         xor     rsi,rsi             ; any addr
         xor     rdx,rdx             ; null addrlen
@@ -284,7 +290,9 @@ The shift subroutine will take any content from offset to the closest null and b
 
 ```nasm
 shift:  ; this subroutine brings all bytes from offset to null to front of buffer
-; we are considering the potential that we read more into the buffer than it takes to find the delimiter (specified by the offset), so we save the extra content past offset for the next read
+; we are considering the potential that we read more into the buffer than it
+; takes to find the delimiter (specified by the offset), so we save the extra
+; content past offset for the next read
 ; r8:  offset pointer
 ; r9:  buf pointer
 ; r10: general register
@@ -304,7 +312,9 @@ shift:  ; this subroutine brings all bytes from offset to null to front of buffe
         cmp     r10,223
         jge     .zero               ; if buffer > BUF_SIZE - MAX_READ, just zero it
         mov     r8b,BYTE [_buf+r10]
-        test    r8b,r8b             ; if buffer offset value is not zero, we need to add one (presuming here the value is the delimiter) to start properly at next section
+        test    r8b,r8b             ; if buffer offset value is not zero, we need to
+        ; add one (presuming here the value is the delimiter) to start properly
+        ; at next section
         jz      .i
         inc     r10
 .i:     lea     r8,[_buf+r10]
@@ -378,7 +388,8 @@ It was clear that sendfile() returns early and doesn't wait for a TCP acknowledg
         mov     rax,0x100000001     ; SO_LINGER struct
         push    rax
         lea     r10,[rsp]           ; set boolean to true
-        mov     rdx,13              ; SO_LINGER (wait around until all data is sent for 200 ms even after calling exit())
+        mov     rdx,13              ; SO_LINGER (wait around until all data
+        ; is sent for 200 ms even after calling exit())
         mov     rsi,1               ; SOL_SOCKET (edit socket api layer)
         xor     rax,rax
         mov     rax,54              ; operator setsockopt
