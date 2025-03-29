@@ -17,5 +17,10 @@
   },
   "dependencies": {
     "@astrojs/prism": "^2.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
