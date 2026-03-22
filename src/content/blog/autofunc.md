@@ -307,7 +307,7 @@ static inline uint16_t mbedtls_get_unaligned_uint16(const void *p)
 
 ### Static Globals and Initializer Walking
 
-mbedTLS uses `static const` arrays for lookup tables:ECC curve parameters, OID registries, precomputed elliptic curve points:
+mbedTLS uses `static const` arrays for lookup tables like ECC curve parameters, OID registries, and precomputed elliptic curve points:
 
 ```c
 static const mbedtls_mpi_uint secp256r1_p[] = {
@@ -489,7 +489,7 @@ for type_name in set(sizeof_refs):
                     sym.deps.append(type_key_typedef)
 ```
 
-This also handles the case where a typedef wraps a forward-declared struct and the struct body hasn't been resolved yet:it tries `find_cursor(definition=True)` and fills in the body, checking first that the typedef doesn't already contain the body inline.
+This also handles the case where a typedef wraps a forward-declared struct and the struct body hasn't been resolved yet. It tries `find_cursor(definition=True)` and fills in the body, checking first that the typedef doesn't already contain the body inline.
 
 ## Macro Resolution
 
@@ -531,7 +531,7 @@ while True:
         tokens.update(findall(r"[A-Za-z_]\w*", src))
 ```
 
-The incremental tokenization is the key optimization. The naive approach calls `graph.render()` each iteration:which runs `toposort()` (O(V+E)) on the full graph. With 20,000+ macros in the TU index and 7 macro resolution passes, that's 7 full toposorts. The optimized version only re-tokenizes the newly added macro source strings and adds them to the running set.
+The incremental tokenization is the key optimization. The naive approach calls `graph.render()` each iteration, which runs `toposort()` (O(V+E)) on the full graph. With 20,000+ macros in the TU index and 7 macro resolution passes, that's 7 full toposorts. The optimized version only re-tokenizes the newly added macro source strings and adds them to the running set.
 
 `render_source()` is a fast path that concatenates all symbol sources without sorting:
 
@@ -564,17 +564,17 @@ static mbedtls_ecp_group_id ecp_supported_grp_id[ECP_NB_CURVES];
 
 I tried four approaches to fix this:
 
-**Unified toposort**:remove all buckets, emit everything in toposort order. Broke everything: 4,916 errors. Without explicit edges from types to the macros they use, toposort places macros at arbitrary positions. Almost every type references at least one macro, so almost every type ended up before the macros it needs.
+**Unified toposort.** Remove all buckets, emit everything in toposort order. Broke everything: 4,916 errors. Without explicit edges from types to the macros they use, toposort places macros at arbitrary positions. Almost every type references at least one macro, so almost every type ended up before the macros it needs.
 
-**Bidirectional deps**:add edges from macros to symbols they reference, AND from symbols to macros they reference. Created cycles everywhere. `MBEDTLS_PRIVATE` is used by 50+ structs. `NULL` is used by everything. Adding those edges makes the graph nearly fully connected.
+**Bidirectional deps.** Add edges from macros to symbols they reference, AND from symbols to macros they reference. Created cycles everywhere. `MBEDTLS_PRIVATE` is used by 50+ structs. `NULL` is used by everything. Adding those edges makes the graph nearly fully connected.
 
-**Forward declarations**:emit `extern` declarations for macro-referenced globals before the macro bucket. Failed because `static const` arrays can't have `extern` forward declarations in C. Also, the forward declaration's type might not be declared yet either.
+**Forward declarations.** Emit `extern` declarations for macro-referenced globals before the macro bucket. Failed because `static const` arrays can't have `extern` forward declarations in C. Also, the forward declaration's type might not be declared yet either.
 
-**Deferred macros**:move macros with non-macro deps to the types bucket. Failed because the types bucket doesn't have edges to macros (that's the bidirectional deps problem), so toposort places the deferred macro after the types that use it.
+**Deferred macros.** Move macros with non-macro deps to the types bucket. Failed because the types bucket doesn't have edges to macros (that's the bidirectional deps problem), so toposort places the deferred macro after the types that use it.
 
-The solution I shipped: handle it in the stubs file. `#define ECP_NB_CURVES 11` in `stubs_mbedtls.h` blacklists the problematic macro and provides a constant value. It's ugly but it works for the one case that hits this pattern.
+The solution: handle it in the stubs file. `#define ECP_NB_CURVES 11` in `stubs_mbedtls.h` blacklists the problematic macro and provides a constant value. It's ugly but it works for the one case that hits this pattern.
 
-The right fix would be emitting macros at their original source positions relative to the declarations they're interleaved with:preserving the ordering from the original `.c` file. That requires tracking source file positions through the extraction pipeline, which is on the roadmap for the C++ port.
+The right fix would be emitting macros at their original source positions relative to the declarations they're interleaved with, preserving the ordering from the original `.c` file. That requires tracking source file positions through the extraction pipeline, which is on the roadmap for the C++ port.
 
 ### Blacklisted Macro Ranges
 
@@ -587,7 +587,7 @@ Embedded firmware is full of logging and assertion macros. The stubs file redefi
 } while(0)
 ```
 
-But when a function calls `ERR_FATAL(...)`, the Clang AST sees the *expanded* version:not the macro call. The expansion produces `CALL_EXPR` nodes to `err_Fatal_internal3()`, `DECL_REF_EXPR` nodes to trace buffer globals, and `UNEXPOSED_EXPR` nodes to diagnostic framework types. Without filtering, the resolver would cross-TU resolve all of them, pulling in the entire error framework, diagnostic subsystem, and trace buffer infrastructure.
+But when a function calls `ERR_FATAL(...)`, the Clang AST sees the *expanded* version, not the macro call. The expansion produces `CALL_EXPR` nodes to `err_Fatal_internal3()`, `DECL_REF_EXPR` nodes to trace buffer globals, and `UNEXPOSED_EXPR` nodes to diagnostic framework types. Without filtering, the resolver would cross-TU resolve all of them, pulling in the entire error framework, diagnostic subsystem, and trace buffer infrastructure.
 
 autofunc collects byte offset ranges for all macro instantiations that transitively reference blacklisted macros:
 
@@ -630,7 +630,7 @@ if self._blacklisted_macro_ranges and cl[1].kind in (
             return None
 ```
 
-The check covers all three cursor kinds:not just `CALL_EXPR`, because the problem isn't limited to function calls. An `UNEXPOSED_EXPR` referencing a trace buffer global inside a `QTRACE` macro would otherwise resolve the global, which resolves its type, which resolves the buffer descriptor struct, which has queue link fields from a platform header the harness can't include. Blocking the initial reference prevents the entire dependency chain.
+The check covers all three cursor kinds, not just `CALL_EXPR`, because the problem isn't limited to function calls. An `UNEXPOSED_EXPR` referencing a trace buffer global inside a `QTRACE` macro would otherwise resolve the global, which resolves its type, which resolves the buffer descriptor struct, which has queue link fields from a platform header the harness can't include. Blocking the initial reference prevents the entire dependency chain.
 
 ### Globals from Macro Source Text
 
@@ -673,7 +673,7 @@ for name in candidates:
         self._resolve_global(tu_globals[name], graph)
 ```
 
-The first implementation did `find_cursor()` for every identifier in macro source text. On firmware with thousands of macros, most identifiers aren't globals:they're parameter names, keywords, operators. Each miss triggered a full TU walk. It took 26 minutes. The fix: build the global name set once from the cursor index, then do set intersection. Same result, sub-second.
+The first implementation did `find_cursor()` for every identifier in macro source text. On firmware with thousands of macros, most identifiers aren't globals. They're parameter names, keywords, operators. Each miss triggered a full TU walk. It took 26 minutes. The fix: build the global name set once from the cursor index, then do set intersection. Same result, sub-second.
 
 ## The Stubs File
 
@@ -728,7 +728,7 @@ while rem_in:
     # process queue...
 ```
 
-The three-bucket render emits symbols in order:macros, types/globals (with semicolons appended if the cursor extent excluded them), then functions. Within each bucket, the toposort order is preserved.
+The three-bucket render emits symbols in order: macros, types/globals (with semicolons appended if the cursor extent excluded them), then functions. Within each bucket, the toposort order is preserved.
 
 ## Performance
 
@@ -744,7 +744,7 @@ I profiled with `cProfile`. The mbedTLS run takes ~90 seconds:
 
 The biggest cost is `walk_preorder`:54 million calls through ctypes bindings. The `spelling` property (7.5M accesses, 12s tottime) marshals a C string through the FFI on every access.
 
-One early version spent 50 seconds in `_collect_rw_counts`:an optional analysis that counts pointer dereference reads/writes across the call graph to annotate harness parameters. It's now behind `--rw-analysis` and disabled by default.
+One early version spent 50 seconds in `_collect_rw_counts`, an optional analysis that counts pointer dereference reads/writes across the call graph to annotate harness parameters. It's now behind `--rw-analysis` and disabled by default.
 
 Another hotspot was the blacklist early-exit. The graph's `add()` method silently drops blacklisted symbols, but `graph.has()` returns false (since nothing was added). Every subsequent encounter re-extracts the source, re-adds (silently dropped), and re-resolves dependencies. `size_t` alone hit this path 423 times. Adding a blacklist check before the emit section cut resolve time from 102s to 88s:
 
