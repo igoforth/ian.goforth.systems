@@ -8,7 +8,7 @@ pubDate: "Mar 10 2024"
 
 A fuzzing harness for a C function is a standalone `.c` file that calls the target with fuzz-generated input. Writing one means pulling in every type definition, struct layout, enum, macro constant, typedef chain, and helper function the target depends on. For a function in a single-file library, you copy a few headers. For a function in a large codebase with dependencies scattered across dozens of files and translation units, it becomes a manual dependency resolution exercise that takes hours and breaks every time the source changes.
 
-I built [autofunc](https://github.com/igoforth/autofunc) to automate this. Given a function name and a `compile_commands.json`, it walks the Clang AST, resolves every dependency transitively across translation units, and emits a single self-contained `.c` file with an AFL++ harness skeleton. This post covers every design decision, the problems I ran into, and the workarounds I found. I'll use mbedTLS's X.509 DER certificate parser as the running example, since it pulls in ASN.1 parsing, signature verification, ECC curve arithmetic, and PSA crypto key management across 21 source files.
+I built [excido](https://github.com/igoforth/excido) to automate this. Given a function name and a `compile_commands.json`, it walks the Clang AST, resolves every dependency transitively across translation units, and emits a single self-contained `.c` file with an AFL++ harness skeleton. This post covers every design decision, the problems I ran into, and the workarounds I found. I'll use mbedTLS's X.509 DER certificate parser as the running example, since it pulls in ASN.1 parsing, signature verification, ECC curve arithmetic, and PSA crypto key management across 21 source files.
 
 ## Architecture
 
@@ -209,7 +209,7 @@ defn = inner.get_definition()
 # defn is None:the definition isn't visible in this TU
 ```
 
-But `pk.c` includes `pk_wrap.h`. The cross-TU resolver already created an `AstDatabase` for `pk.c` (to resolve `mbedtls_pk_free`). After cross-TU function resolution completes, autofunc scans the graph for typedefs with empty aliases and tries each cached TU:
+But `pk.c` includes `pk_wrap.h`. The cross-TU resolver already created an `AstDatabase` for `pk.c` (to resolve `mbedtls_pk_free`). After cross-TU function resolution completes, excido scans the graph for typedefs with empty aliases and tries each cached TU:
 
 ```python
 for sym_key, sym in list(graph.symbols.items()):
@@ -258,7 +258,7 @@ static inline uint16_t mbedtls_get_unaligned_uint16(const void *p)
 // ...
 ```
 
-That's `#endif` without a matching `#if`. After extraction, autofunc counts the imbalance:
+That's `#endif` without a matching `#if`. After extraction, excido counts the imbalance:
 
 ```python
 @staticmethod
@@ -441,7 +441,7 @@ typedef struct {
 
 A cross-TU function that references `struct key_data` resolves it as a standalone symbol. But the `psa_key_slot_t` source text already contains the nested definition. Both end up in the graph.
 
-During `render()`, before emitting a standalone struct, autofunc pre-scans all symbol sources:
+During `render()`, before emitting a standalone struct, excido pre-scans all symbol sources:
 
 ```python
 all_other_source = {self._key(sym): sym.source for sym in ordered if sym.source.strip()}
@@ -493,11 +493,11 @@ This also handles the case where a typedef wraps a forward-declared struct and t
 
 ## Macro Resolution
 
-C macros live outside the AST. `#define` directives are processed by the preprocessor before parsing, so the cursor tree has no representation of them. autofunc resolves macros in a separate pass after all types and functions are in the graph.
+C macros live outside the AST. `#define` directives are processed by the preprocessor before parsing, so the cursor tree has no representation of them. excido resolves macros in a separate pass after all types and functions are in the graph.
 
 ### The Algorithm
 
-The TU exposes `MACRO_DEFINITION` cursors as top-level children. autofunc indexes them by name, then iteratively matches against tokens in the graph:
+The TU exposes `MACRO_DEFINITION` cursors as top-level children. excido indexes them by name, then iteratively matches against tokens in the graph:
 
 ```python
 # build initial token set from all graph source (fast concat, no toposort)
@@ -589,7 +589,7 @@ Embedded firmware is full of logging and assertion macros. The stubs file redefi
 
 But when a function calls `ERR_FATAL(...)`, the Clang AST sees the *expanded* version, not the macro call. The expansion produces `CALL_EXPR` nodes to `err_Fatal_internal3()`, `DECL_REF_EXPR` nodes to trace buffer globals, and `UNEXPOSED_EXPR` nodes to diagnostic framework types. Without filtering, the resolver would cross-TU resolve all of them, pulling in the entire error framework, diagnostic subsystem, and trace buffer infrastructure.
 
-autofunc collects byte offset ranges for all macro instantiations that transitively reference blacklisted macros:
+excido collects byte offset ranges for all macro instantiations that transitively reference blacklisted macros:
 
 ```python
 # pre-tokenize macro sources into identifier sets
@@ -645,7 +645,7 @@ SM_LOG_HF_ERROR("SM", SM_SUB, "Invalid field");
 
 `sm_message_as_id` appears as a `DECL_REF_EXPR` inside the blacklisted range, so it's dropped. But the harness needs it:`SM_SUB` is a non-blacklisted macro that expands to `(sm_message_as_id)`.
 
-After macro resolution, autofunc scans non-blacklisted macro source text for TU-scope globals:
+After macro resolution, excido scans non-blacklisted macro source text for TU-scope globals:
 
 ```python
 # build global name set from cursor index (O(1) per lookup)
@@ -790,4 +790,4 @@ I also tested against an embedded firmware codebase, a NAS protocol message deco
 
 **The Python bindings are the bottleneck.** 54 million `walk_preorder` calls through ctypes. Every `cursor.spelling` access marshals through the C FFI. A C++ port using Clang Tooling directly would eliminate this overhead and enable source-position-aware macro emission, solving the three-bucket problem at the root.
 
-The code is at [github.com/igoforth/autofunc](https://github.com/igoforth/autofunc).
+The code is at [github.com/igoforth/excido](https://github.com/igoforth/excido).
