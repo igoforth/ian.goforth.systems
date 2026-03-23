@@ -6,7 +6,7 @@ pubDate: "Feb 26 2026"
 
 ## Introduction
 
-Most AI decompilers I've looked at train a model to go from binary to C. The model learns what C looks like and generates plausible code that compiles to something different from the input. The BLEU scores look great in the paper [1, 2]. The output tends to be wrong in ways that matter. Even LLM4Decompile [3], which moved to re-executability as a metric, found only 21% of decompiled functions pass all tests at best.
+Most AI decompilers I've looked at train a model to go from binary to C. The model learns what C looks like and generates plausible code that compiles to something different from the input. The BLEU scores look great in the paper[^1][^2]. The output tends to be wrong in ways that matter. Even LLM4Decompile[^3], which moved to re-executability as a metric, found only 21% of decompiled functions pass all tests at best.
 
 The underlying problem is that binary-to-C is a many-to-many mapping with no clean loss signal. Different source compiles to identical binaries. The same source with different compiler flags produces different binaries. Variable names, formatting, typedef choices are all erased at compile time. The model has to hallucinate them. And "does this look like real C" is a fundamentally different question from "is this semantically correct."
 
@@ -24,7 +24,7 @@ If a domain expert can shape unbiased training pairs, that's most of the battle.
 
 ## The Target: SCF + arith + memref
 
-MLIR [7] (Multi-Level Intermediate Representation) is a compiler framework with a dialect system that separates concerns into composable layers. Three dialects form the target representation:
+MLIR[^7] (Multi-Level Intermediate Representation) is a compiler framework with a dialect system that separates concerns into composable layers. Three dialects form the target representation:
 
 **SCF** (Structured Control Flow): `scf.for`, `scf.while`, `scf.if`. These map 1:1 to C control structures. The model outputs structured loops and conditionals, not a flat CFG with branch instructions.
 
@@ -34,7 +34,7 @@ MLIR [7] (Multi-Level Intermediate Representation) is a compiler framework with 
 
 This level seems like the right tradeoff. Lower than this (LLVM dialect) loses structure, you're back to basic blocks and explicit branches, which is the flat CFG problem that makes traditional decompilation hard. Higher than this (linalg, tensor) requires inferring high-level intent, which probably reintroduces hallucination.
 
-Here's what Polygeist [8] (cgeist) produces from a conditional sum function in C:
+Here's what Polygeist[^8] (cgeist) produces from a conditional sum function in C:
 
 ```mlir
 func.func @conditional_sum(
@@ -124,7 +124,7 @@ These are all toolchain limitations rather than architectural problems. The mode
 
 Feeding raw binary to the model wastes capacity on solved problems. Instruction decoding, section header parsing, ELF metadata, alignment padding, PLT stubs, CRT startup code. Ghidra already handles all of this.
 
-Ghidra's p-code [9] is a production-grade, architecture-independent IL. Every supported architecture (x86, ARM, MIPS, PowerPC, SPARC, AVR, Hexagon, dozens more) gets mechanically translated to the same p-code via SLEIGH specs. The vocabulary is small and regular, which should make it a reasonable tokenizer target.
+Ghidra's p-code[^9] is a production-grade, architecture-independent IL. Every supported architecture (x86, ARM, MIPS, PowerPC, SPARC, AVR, Hexagon, dozens more) gets mechanically translated to the same p-code via SLEIGH specs. The vocabulary is small and regular, which should make it a reasonable tokenizer target.
 
 The pipeline becomes:
 
@@ -134,7 +134,7 @@ Binary -> Ghidra (headless) -> p-code -> AI model -> SCF MLIR -> C
 
 One model, one input format, every architecture Ghidra supports. No per-ISA binary encoder. No custom tokenizer for raw bytes. The model learns p-code to SCF: recover structured control flow from a CFG, and recover typed memory access from raw loads and stores. Both are well-studied compiler problems, just usually solved with hand-written rules rather than learned from data.
 
-The alternative I considered was preprocessing raw binary into a canonical instruction set, collapsing idioms (`xor eax, eax` becomes `mov eax, 0`), normalizing addressing modes into explicit pointer arithmetic, decomposing complex instructions. This is essentially what Hex-Rays's microcode does, and it took them years. Projects like McSema and RetDec that tried binary-to-LLVM-IR lifting ran into fundamental limitations around indirect jumps, function pointers, and incomplete disassembly [6]. p-code gets most of it for free.
+The alternative I considered was preprocessing raw binary into a canonical instruction set, collapsing idioms (`xor eax, eax` becomes `mov eax, 0`), normalizing addressing modes into explicit pointer arithmetic, decomposing complex instructions. This is essentially what Hex-Rays's microcode does, and it took them years. Projects like McSema and RetDec that tried binary-to-LLVM-IR lifting ran into fundamental limitations around indirect jumps, function pointers, and incomplete disassembly[^6]. p-code gets most of it for free.
 
 Another alternative: skip MLIR entirely, go p-code to C directly. Fewer pipeline stages, less error propagation. But you lose the verification path (Pipeline A) and the separation between the learned stage and the deterministic stage. If the model produces wrong C, you have no easy way to check except reading it. If the model produces wrong MLIR, you can compile it and diff the binary.
 
@@ -142,7 +142,7 @@ Another alternative: skip MLIR entirely, go p-code to C directly. Fewer pipeline
 
 ### The Problem
 
-The obvious training pair is (binary, source), but the mapping is many-to-many. Different source compiles to identical binaries. The same source with different flags produces different binaries. Most published datasets [4, 5] are heavily skewed toward GCC/Linux/x86-64 at -O0, which is almost trivially decompilable. Real targets are -O2 or higher, from various compilers, often cross-compiled.
+The obvious training pair is (binary, source), but the mapping is many-to-many. Different source compiles to identical binaries. The same source with different flags produces different binaries. Most published datasets[^4][^5] are heavily skewed toward GCC/Linux/x86-64 at -O0, which is almost trivially decompilable. Real targets are -O2 or higher, from various compilers, often cross-compiled.
 
 Training on -O0 gives you great metrics and a model that probably falls apart on real targets. Training on -O2 means dealing with inlining, loop transforms, vectorization, and all the other optimizations that destroy the 1:1 mapping between source and binary.
 
@@ -171,7 +171,7 @@ There's one exception. If a callee is inlined by the compiler, its implementatio
 
 ### Polygeist for MLIR Ground Truth
 
-For training the MLIR output side specifically, Polygeist [8] (cgeist) compiles C directly to SCF-level MLIR without going through LLVM IR:
+For training the MLIR output side specifically, Polygeist[^8] (cgeist) compiles C directly to SCF-level MLIR without going through LLVM IR:
 
 ```
 source.c --+-- cgeist ---------> SCF MLIR (target)
@@ -220,14 +220,12 @@ Whether the model architecture works out is an open question. But the representa
 
 The code is at [github.com/igoforth/aletheia](https://github.com/igoforth/aletheia).
 
-## References
-
-1. Fu et al., ["N-Bref: A High-fidelity Decompiler Exploiting Programming Structures"](https://openreview.net/forum?id=6GkL6qM3LV) (ICLR 2021 submission). Trained on synthetic programs at -O0, evaluated with token accuracy.
-2. Hosseini & Dolan-Gavitt, ["Beyond the C: Retargetable Decompilation using Neural Machine Translation"](https://arxiv.org/abs/2212.08950) (NDSS BAR 2023). Trained on -O0, argues BLEU is inappropriate for code.
-3. Tan et al., ["LLM4Decompile: Decompiling Binary Code with Large Language Models"](https://arxiv.org/abs/2403.05286) (EMNLP 2024). Moved to re-executability as metric.
-4. da Silva et al., ["AnghaBench: A Suite with One Million Compilable C Benchmarks"](https://github.com/brenocfg/AnghaBench) (CGO 2021). All GCC, all x86-64.
-5. Armengol-Estape et al., ["ExeBench: An ML-Scale Dataset of Executable C Functions"](https://huggingface.co/datasets/jordiae/exebench) (MAPS at PLDI 2022). Average cyclomatic complexity 2.1 vs 3.6 for general GitHub C.
-6. Liu et al., ["SoK: Demystifying Binary Lifters Through the Lens of Downstream Applications"](https://ieeexplore.ieee.org/document/9833799) (IEEE S&P 2022).
-7. Lattner et al., ["MLIR: Scaling Compiler Infrastructure for Domain Specific Computation"](https://ieeexplore.ieee.org/document/9370308/) (CGO 2021).
-8. Moses et al., ["Polygeist: Raising C to Polyhedral MLIR"](https://dl.acm.org/doi/10.1109/PACT52795.2021.00011) (PACT 2021).
-9. NSA, [Ghidra SLEIGH specification](https://github.com/NationalSecurityAgency/ghidra/blob/master/GhidraDocs/languages/html/sleigh.html) (open-sourced 2019). Formal semantics: Naus et al., ["A Formal Semantics for P-Code"](https://link.springer.com/chapter/10.1007/978-3-031-25803-9_7) (VSTTE 2022).
+[^1]: Fu et al., ["N-Bref: A High-fidelity Decompiler Exploiting Programming Structures"](https://openreview.net/forum?id=6GkL6qM3LV) (ICLR 2021 submission). Trained on synthetic programs at -O0, evaluated with token accuracy.
+[^2]: Hosseini & Dolan-Gavitt, ["Beyond the C: Retargetable Decompilation using Neural Machine Translation"](https://arxiv.org/abs/2212.08950) (NDSS BAR 2023). Trained on -O0, argues BLEU is inappropriate for code.
+[^3]: Tan et al., ["LLM4Decompile: Decompiling Binary Code with Large Language Models"](https://arxiv.org/abs/2403.05286) (EMNLP 2024). Moved to re-executability as metric.
+[^4]: da Silva et al., ["AnghaBench: A Suite with One Million Compilable C Benchmarks"](https://github.com/brenocfg/AnghaBench) (CGO 2021). All GCC, all x86-64.
+[^5]: Armengol-Estape et al., ["ExeBench: An ML-Scale Dataset of Executable C Functions"](https://huggingface.co/datasets/jordiae/exebench) (MAPS at PLDI 2022). Average cyclomatic complexity 2.1 vs 3.6 for general GitHub C.
+[^6]: Liu et al., ["SoK: Demystifying Binary Lifters Through the Lens of Downstream Applications"](https://ieeexplore.ieee.org/document/9833799) (IEEE S&P 2022).
+[^7]: Lattner et al., ["MLIR: Scaling Compiler Infrastructure for Domain Specific Computation"](https://ieeexplore.ieee.org/document/9370308/) (CGO 2021).
+[^8]: Moses et al., ["Polygeist: Raising C to Polyhedral MLIR"](https://dl.acm.org/doi/10.1109/PACT52795.2021.00011) (PACT 2021).
+[^9]: NSA, [Ghidra SLEIGH specification](https://github.com/NationalSecurityAgency/ghidra/blob/master/GhidraDocs/languages/html/sleigh.html) (open-sourced 2019). Formal semantics: Naus et al., ["A Formal Semantics for P-Code"](https://link.springer.com/chapter/10.1007/978-3-031-25803-9_7) (VSTTE 2022).
