@@ -34,28 +34,29 @@ MLIR (Multi-Level Intermediate Representation) is a compiler framework with a di
 
 This level seems like the right tradeoff. Lower than this (LLVM dialect) loses structure, you're back to basic blocks and explicit branches, which is the flat CFG problem that makes traditional decompilation hard. Higher than this (linalg, tensor) requires inferring high-level intent, which probably reintroduces hallucination.
 
-Here's what the model's output would look like for a conditional sum function:
+Here's what [Polygeist](https://github.com/llvm/Polygeist) (cgeist) produces from a conditional sum function in C:
 
 ```mlir
 func.func @conditional_sum(
-    %arr: memref<?xi32>, %n: index, %threshold: i32) -> i32 {
+    %arg0: memref<?xi32>, %arg1: i32, %arg2: i32) -> i32 {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  %init = arith.constant 0 : i32
-
-  %result = scf.for %i = %c0 to %n step %c1
-      iter_args(%acc = %init) -> i32 {
-    %val = memref.load %arr[%i] : memref<?xi32>
-    %cond = arith.cmpi sgt, %val, %threshold : i32
-    %next = scf.if %cond -> i32 {
-      %sum = arith.addi %acc, %val : i32
-      scf.yield %sum : i32
+  %c0_i32 = arith.constant 0 : i32
+  %0 = arith.index_cast %arg1 : i32 to index
+  %1 = scf.for %arg3 = %c0 to %0 step %c1
+      iter_args(%arg4 = %c0_i32) -> (i32) {
+    %2 = memref.load %arg0[%arg3] : memref<?xi32>
+    %3 = arith.cmpi sgt, %2, %arg2 : i32
+    %4 = scf.if %3 -> (i32) {
+      %5 = memref.load %arg0[%arg3] : memref<?xi32>
+      %6 = arith.addi %arg4, %5 : i32
+      scf.yield %6 : i32
     } else {
-      scf.yield %acc : i32
+      scf.yield %arg4 : i32
     }
-    scf.yield %next : i32
+    scf.yield %4 : i32
   }
-  return %result : i32
+  return %1 : i32
 }
 ```
 
@@ -107,7 +108,7 @@ int32_t conditional_sum(int32_t* v1, size_t v2, int32_t v3) {
 
 Variable names are `vN` (SSA values), types are explicit, casts are verbose. But the structure is correct and the code compiles. A cleanup pass could improve readability. The semantics are what matter at this stage.
 
-### MLIR 20 Gaps
+### MLIR Gaps
 
 Three limitations in the current MLIR toolchain:
 
@@ -180,7 +181,7 @@ source.c --+-- cgeist ---------> SCF MLIR (target)
 
 This gives matched (p-code, SCF MLIR) pairs. The model can train against either representation: MLIR for the structured IR path, C source for the end-to-end path. Having both lets you compare approaches.
 
-Polygeist requires building LLVM+Clang from source (no packages), but the compilation is mechanical.
+Polygeist builds against its own bundled LLVM (currently pinned to LLVM 18), so it doesn't conflict with system packages.
 
 ## Type Recovery
 
@@ -196,14 +197,13 @@ The excido training format should handle this reasonably well. The model doesn't
 
 ## What's Not Built
 
-The two pipelines work end-to-end. The MLIR examples are hand-written (three test functions: conditional sum, matrix multiply, fibonacci) and the build script reproduces everything.
+Both pipelines work end-to-end. The forward path (C → SCF MLIR via Polygeist) generates the target representation, Pipeline A compiles it to x86, and Pipeline B lowers EmitC to C. Three test functions: conditional sum, matrix multiply, fibonacci.
 
 What doesn't exist yet:
 
 - The p-code extraction pipeline (Ghidra headless scripting)
 - Training data generation at scale (the GitHub scraping + compilation + excido integration)
 - The model itself
-- The SCF-to-EmitC shim (designed, not coded)
 - Evaluation framework beyond Pipeline A
 
 The model architecture is still an open question. I've been thinking about autoencoders (encode source and binary into latent spaces, learn the translation in latent space) and sequence-to-sequence (p-code tokens to MLIR tokens). The autoencoder approach could sidestep function boundary detection and file boundary alignment by operating on whole-binary representations. The sequence-to-sequence approach is simpler but requires clean function segmentation as input.
