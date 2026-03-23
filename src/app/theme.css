@@ -1,0 +1,113 @@
+@import "tailwindcss";
+@import "modern-normalize";
+
+@plugin "@tailwindcss/typography";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-serif: var(--font-merriweather);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-destructive: var(--destructive);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Muted editorial palette — easy on the eyes, warm neutrals with restrained blue accent */
+
+:root {
+  @apply appearance-none accent-accent scheme-light;
+
+  --radius: 0.625rem;
+
+  --background: oklch(0.98 0.003 80);    /* warm off-white */
+  --foreground: oklch(0.25 0.01 50);     /* warm near-black */
+
+  --card: oklch(0.97 0.003 80);
+  --card-foreground: oklch(0.25 0.01 50);
+
+  --primary: oklch(0.35 0.04 240);       /* muted dark blue */
+  --primary-foreground: oklch(0.98 0 0);
+
+  --secondary: oklch(0.50 0.06 240);     /* subdued blue */
+  --secondary-foreground: oklch(0.98 0 0);
+
+  --muted: oklch(0.94 0.005 80);         /* warm light gray */
+  --muted-foreground: oklch(0.50 0.01 50); /* readable mid-gray */
+
+  --accent: oklch(0.48 0.08 240);        /* restrained blue for links */
+  --accent-foreground: oklch(0.25 0.01 50);
+
+  --destructive: oklch(0.55 0.18 25);
+
+  --border: oklch(0.90 0.005 80);        /* subtle warm border */
+  --input: oklch(0.92 0.005 80);
+  --ring: oklch(0.50 0.06 240);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    @apply scheme-dark;
+
+    --background: oklch(0.18 0.01 240);   /* dark blue-gray */
+    --foreground: oklch(0.90 0.005 80);   /* warm off-white */
+    --card: oklch(0.20 0.012 240);
+    --card-foreground: oklch(0.90 0.005 80);
+    --primary: oklch(0.70 0.08 220);
+    --primary-foreground: oklch(0.18 0.01 240);
+    --secondary: oklch(0.40 0.05 240);
+    --secondary-foreground: oklch(0.90 0.005 80);
+    --muted: oklch(0.24 0.015 240);
+    --muted-foreground: oklch(0.65 0.015 80);
+    --accent: oklch(0.65 0.08 220);       /* softer cyan for dark mode */
+    --accent-foreground: oklch(0.90 0.005 80);
+    --destructive: oklch(0.60 0.18 25);
+    --border: oklch(0.28 0.02 240);
+    --input: oklch(0.28 0.02 240);
+    --ring: oklch(0.65 0.08 220);
+  }
+}
+
+.dark {
+  --background: oklch(0.18 0.01 240);
+  --foreground: oklch(0.90 0.005 80);
+  --card: oklch(0.20 0.012 240);
+  --card-foreground: oklch(0.90 0.005 80);
+  --primary: oklch(0.70 0.08 220);
+  --primary-foreground: oklch(0.18 0.01 240);
+  --secondary: oklch(0.40 0.05 240);
+  --secondary-foreground: oklch(0.90 0.005 80);
+  --muted: oklch(0.24 0.015 240);
+  --muted-foreground: oklch(0.65 0.015 80);
+  --accent: oklch(0.65 0.08 220);
+  --accent-foreground: oklch(0.90 0.005 80);
+  --destructive: oklch(0.60 0.18 25);
+  --border: oklch(0.28 0.02 240);
+  --input: oklch(0.28 0.02 240);
+  --ring: oklch(0.65 0.08 220);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

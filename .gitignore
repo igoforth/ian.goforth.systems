@@ -1,21 +1,12 @@
-<<<<<<< HEAD
-node_modules/
-.cache/
-# Default ignored files
-/shelf/
-/workspace.xml
-# Editor-based HTTP Client requests
-/httpRequests/
-# Datasource local storage ignored files
-/dataSources/
-/dataSources.local.xml
-/.idea/
-=======
-# build output
-dist/
-
 # dependencies
 node_modules/
+
+# next.js
+.next/
+out/
+
+# opennext build output
+.open-next/
 
 # logs
 npm-debug.log*
@@ -23,10 +14,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-
 # environment variables
 .env
 .env.production
+.env.local
+.env.*.local
 
 # macOS-specific files
 .DS_Store
@@ -36,3 +28,6 @@ pnpm-debug.log*
 
 # incomplete
 drafts/
+
+# IDE
+.idea/

@@ -1,26 +1,48 @@
 {
-  "name": "@example/blog",
-  "version": "0.0.1",
+  "name": "ian-goforth-systems",
+  "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "astro": "astro"
-  },
-  "devDependencies": {
-    "@astrojs/mdx": "^0.9.0",
-    "@astrojs/rss": "^1.0.0",
-    "@astrojs/sitemap": "^1.0.0",
-    "astro": "^1.9.1"
+    "dev": "next dev --turbopack",
+    "build": "next build --webpack",
+    "postbuild": "node scripts/add-integrity.mjs",
+    "start": "next start",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "gen-cert": "node scripts/gen-cert.mjs"
   },
   "dependencies": {
-    "@astrojs/prism": "^2.0.0"
+    "@opennextjs/cloudflare": "^1.14.9",
+    "@tailwindcss/typography": "^0.5.19",
+    "feed": "^4.2.2",
+    "gray-matter": "^4.0.3",
+    "modern-normalize": "^3.0.1",
+    "next": "^16",
+    "next-mdx-remote": "^5.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "rehype-prism-plus": "^2.0.0",
+    "remark-gfm": "^4.0.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "babel-plugin-react-compiler": "1.0.0",
+    "cheerio": "^1.1.2",
+    "glob": "^13.0.0",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5",
+    "wrangler": "^4.53.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "sharp",
+      "workerd"
     ]
   }
 }

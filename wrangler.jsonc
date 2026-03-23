@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ian-goforth-systems",
+  "account_id": "1567cee96e0143ffaf7a19c70cd792fc",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-11-26",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "minify": true,
+  "upload_source_maps": false,
+  "placement": {
+    "mode": "smart"
+  },
+  "dev": {
+    "port": 8771,
+    "local_protocol": "https"
+  },
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "NEXT_INC_CACHE_KV",
+      "id": "d98e3578ac5d4312b2137f5ff7989755"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NEXT_CACHE_DO_QUEUE",
+        "class_name": "DOQueueHandler"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "DOQueueHandler"
+      ]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "invocation_logs": false
+    }
+  },
+  "routes": [
+    {
+      "zone_name": "goforth.systems",
+      "pattern": "https://ian.goforth.systems/*"
+    }
+  ],
+  "vars": {
+    "NEXT_PUBLIC_SITE_URL": "https://ian.goforth.systems"
+  }
+}
