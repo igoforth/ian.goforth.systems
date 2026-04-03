@@ -144,7 +144,7 @@ class CSPBuilder {
       )
       .scriptSrcAttr("'none'")
       .styleSrc("'self'", "'unsafe-inline'")
-      .imgSrc("'self'", "data:")
+      .imgSrc("'self'", "data:", "https://deploy.workers.cloudflare.com", "https://vercel.com", "https://www.netlify.com")
       .mediaSrc("'self'")
       .fontSrc("'self'")
       .frameSrc("'none'")
