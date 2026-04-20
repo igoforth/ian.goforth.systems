@@ -236,7 +236,38 @@ The spatial heatmap shows the tail concentrates near the grid boundaries:
 
 ![Spatial error heatmap showing failures concentrate near corners](/bistatic-spatial-error.png)
 
-Targets in the interior of the grid have near-zero mean error. A handful of cells near the edges show 10–14 pixel mean error: those are the corner-flip failures. This is a physically motivated failure mode, not noise. More transmitters, asymmetric placement, or finer Doppler bin resolution would likely resolve it.
+Targets in the interior of the grid have near-zero mean error. A handful of cells near the edges show 10–14 pixel mean error: those are the corner-flip failures. This is a physically motivated failure mode, not noise.
+
+## Diverse Frequencies Fix the Corner Flips
+
+A closer look at the failure mode points at a design choice in the dataset. All four transmitters share the same 140 MHz carrier frequency. That can't happen in a real bistatic radar: if every transmitter broadcasts on the same frequency, the receiver can't separate which reflection came from which transmitter. Real systems use FDMA, with one carrier per transmitter, and channelize the receiver to split them apart.
+
+Using a single carrier for all transmitters also preserves the geometric symmetries of the array. With 4 identical transmitters arranged as a square, mirror-image target configurations produce the same Doppler pattern because the `F/C` scaling is uniform across all observations. Each transmitter's Doppler magnitude is just a range-rate in the same units, and the network can't tell a target-moving-northeast-from-corner-A apart from a target-moving-southwest-from-corner-C.
+
+Adding distinct frequencies breaks this. Change the dataset so transmitter `i` broadcasts at `140 + 5i` MHz:
+
+```python
+self.tx_frequencies = torch.tensor(
+    [140e6, 145e6, 150e6, 155e6],
+    dtype=self.dtype, device=self.device,
+)
+# Doppler equation then uses per-transmitter F:
+m = -(F / self.C_T) * (n1 / d1 + n2 / d2)
+```
+
+Retraining the Physics Transformer from scratch on this FDMA dataset:
+
+| Metric | Uniform 140 MHz | Diverse 140–155 MHz |
+|--------|-----------------|---------------------|
+| Exact match | 60.5% | 58.5% |
+| Within 1 px | 85.4% | 83.2% |
+| Within 2 px | 93.9% | 92.3% |
+| Mean error | 0.65 px | 0.83 px |
+| **Failures >10 px** | **~5%** | **1.1%** |
+
+Slightly lower overall accuracy (≈2 points on exact match), but the catastrophic failure rate drops by 5×. The remaining large errors are no longer clean diagonal flips. They're scattered geometric ambiguities that 4 transmitters can't fully resolve.
+
+This is a useful radar engineering trade-off to surface. For a surveillance application where "mostly right, never catastrophically wrong" matters more than average accuracy, FDMA across transmitters is a much better design than maximizing the average case with a uniform-carrier array. More transmitters or asymmetric placement would push further in the same direction. The physics-aware attention architecture reads the resulting FDMA signal correctly because each (timestep, transmitter) token has its own embedding and coordinates: the model never assumed the transmitters were interchangeable.
 
 ## Attention Structure
 
@@ -250,6 +281,31 @@ The attention weights across the four encoder layers show a clear specialization
 - **Layer 3**: vertical stripes. Most query tokens attend to a few "hub" key tokens in the middle of the time series. These become the pooled representation that the classification head reads.
 
 I'd expected, going in, that the model would cleanly separate "same-timestep across transmitters" (triangulation) from "same-transmitter across time" (velocity) attention. What actually happened is more pragmatic: the model learns a few information-aggregation hubs and routes most of the signal through them. Less pure than the physics motivation, more like what Transformers typically learn on any structured task, but the inductive bias of the tokenization still provides the critical scaffolding.
+
+## What the Model Actually Needs
+
+The Physics Transformer gives attention several signals: Doppler vectors projected through `input_proj`, transmitter identity via `tx_emb(i)`, timestep identity via `time_emb(t)`, and transmitter coordinates via `tx_coord_proj([xn, yn])`. Which of these are doing real work? A full ablation over a fresh 100k-sample variable-velocity run:
+
+| Identity features | Exact | Within 1 px | Failures >10 px |
+|-------------------|-------|-------------|-----------------|
+| tx_emb + fixed coords | 58.5% | 83.2% | 11 |
+| tx_emb only, no coords | 56.7% | 81.9% | ~20 |
+| Learnable coords + tx_emb | 58.3% | 84.2% | ~10 |
+| Learnable coords, no tx_emb | 56.1% | 83.0% | 11 |
+| **No transmitter identity at all** | **39.1%** | **57.7%** | **140** |
+| Fully anonymous (no time_emb either) | 37.9% | 58.2% | 139 |
+
+Three conclusions:
+
+**Transmitter identity is essential.** Removing it drops exact match from 58% to 39% and increases catastrophic failures by 12×. The model can still extract *some* structure from anonymous Doppler vectors, but without knowing which transmitter observed which vector, it can't triangulate. Identity is the single most important inductive bias in the architecture.
+
+**Time ordering is free.** Removing `time_emb` makes almost no difference (39% → 38%). The temporal structure is already implicit in how the data is laid out as `(T, 4, 1000)` tokens, and mean-pooling at the end is order-invariant anyway. A small architectural simplification that costs nothing.
+
+**Identity is interchangeable; physical coordinates are not required.** Either a learned `tx_emb(i)` or a coordinate projection works. They produce redundant signals; the model uses whichever gets easier gradient flow. I tried making `tx_coords` learnable with random initialization, hoping the model would recover the true transmitter positions from the Doppler data (a physics-informed parallel to NeRF learning camera poses). It didn't. When `tx_emb` was present, the learnable coords stayed near their random initialization because `tx_emb` was carrying all the identity signal. When `tx_emb` was removed, the coords spread into four distinct points that were not the true corner positions: the model only needs distinct per-transmitter values, not physically correct ones.
+
+![Learned transmitter coordinates (stars) versus true positions (squares), with tx_emb present](/bistatic-learned-coords.png)
+
+For the model to actually recover the geometry, the architecture would need to use coordinates in a physics-constrained computation (e.g. explicitly computing target-to-transmitter distance and backpropagating through the Doppler equation). As additive embeddings, coordinates are just another identity feature. That's a research direction for a follow-up post: bistatic self-calibration from Doppler alone, which is closer to passive radar using transmitters of opportunity than to a fixed surveyed array.
 
 ## Implementation Notes
 
@@ -276,6 +332,6 @@ The code is at [github.com/igoforth/bistatic-doppler-localization](https://githu
 
 **Architecture choice and tokenization matter more than parameter count.** The 1M-parameter Physics Transformer outperformed a 15M-parameter standard Transformer by 57× on exact match. Standard Transformers on this task collapsed to 0.3% accuracy because they tokenized by timestep instead of by (timestep, transmitter). One small structural change was the entire difference between "completely broken" and "state of the art for this problem."
 
-**Failure modes reveal problem structure.** The worst-case corner-flip errors directly visualize a geometric ambiguity in the bistatic Doppler equations. Four transmitters arranged as a square are enough to disambiguate position + velocity *in the interior*, but the symmetries at the grid boundaries produce aliased solutions. A real deployment would fix this with asymmetric transmitter placement or a fifth transmitter, both standard tricks in the radar literature.
+**Failure modes reveal problem structure.** The worst-case corner-flip errors directly visualized a geometric ambiguity in the bistatic Doppler equations. Four identical-frequency transmitters arranged as a square preserve too much symmetry; mirror-image target configurations produce the same Doppler pattern. The fix was not algorithmic but physical: one carrier per transmitter, which a real radar would do anyway to separate receiver channels. Turning "we observed a failure mode" into "we diagnosed its physical cause and fixed it with a standard radar engineering trick" took a one-line dataset change.
 
 **Metric design matters.** An early version of this project reported "99.7% pixel accuracy" using a per-pixel threshold `|pred − target| ≤ 0.01`. For a 28×28 image where 783 of 784 pixels are zero, that metric is satisfied by a model that outputs all zeros (783/784 = 99.87%). I was celebrating a metric hallucination for longer than I'd like to admit. Argmax-based metrics (exact match, distance-to-target) gave an honest read: the model wasn't learning anything.
