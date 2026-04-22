@@ -1,14 +1,14 @@
 ---
-title: "Bistatic Doppler Localization with Physics-Aware Attention"
-description: "Four transmitters, a moving target, and an inverse problem. The static formulation hits a 35% ceiling. Temporal observations break through for fixed velocity. Variable velocity needs something more: a Transformer that tokens by (timestep, transmitter) reaches 60% exact / 85% within one pixel."
-pubDate: "Apr 19 2026"
+title: "Bistatic Doppler Localization with Tokenized Attention"
+description: "Four transmitters, a moving target, and an inverse problem. The static formulation hits a 35% ceiling. Temporal observations break through for fixed velocity. Variable velocity needs something more: a Transformer that tokens by (timestep, transmitter), and process noise on the trajectory to actually wake up its inductive bias. End result: 65% exact / 92% within one pixel / 99% within two pixels, P99 error 1.4 pixels."
+pubDate: "Apr 22 2026"
 ---
 
 ## Introduction
 
 In a bistatic radar system, transmitters and receivers sit at different locations. A transmitter illuminates a target, the target reflects the signal, and the receiver measures the returned frequency. Because the target is moving, the returned frequency is Doppler-shifted from the transmitted frequency. With multiple transmitters at known positions, the collection of Doppler shifts encodes the target's position and velocity through a nonlinear geometric relationship. A real tracking radar inverts this relationship to estimate target state.
 
-The question I wanted to answer: how well can a neural network learn this inverse mapping, and what inductive biases does it need? The short answer is that the naive formulation (single-shot Doppler → position) hits an information ceiling around 35%. Moving to a time-series formulation with a sequence-aware model (GRU) breaks through to 59% exact position match when target velocity is fixed. Variable velocity is much harder: 4-parameter inverse problem, catastrophic overfitting with a few thousand samples. A **physics-aware Transformer** that tokenizes by (timestep, transmitter) solves it, reaching 60% exact / 85% within one pixel on the full variable-velocity task, matching fixed-velocity performance with a 1M-parameter model.
+The question I wanted to answer: how well can a neural network learn this inverse mapping, and what inductive biases does it need? The short answer is that the naive formulation (single-shot Doppler → position) hits an information ceiling around 35%. Moving to a time-series formulation with a sequence-aware model (GRU) breaks through to 59% exact position match when target velocity is fixed. Variable velocity is much harder: 4-parameter inverse problem, catastrophic overfitting with a few thousand samples. A **Transformer that tokenizes by (timestep, transmitter)** reaches 60% exact / 85% within one pixel out of the box. Two further changes (adding per-timestep velocity jitter and training on variable-length observation windows) push the model to **64.8% exact, 92.3% within one pixel, 99.1% within two pixels, P99 error 1.42 pixels** on held-out validation, and (more interestingly) produce attention maps where the architecture's prior is finally being used.
 
 PaRa designed the bistatic geometry and the data encoding. I implemented the dataset pipelines, loss function exploration, training infrastructure, architecture search, and analysis. The dataset was originally built for a genetic algorithm-driven neural architecture search project that evolves MLP, Transformer, and KAN architectures. This post documents the baselines I built to validate the task itself, independent of the NAS framework.
 
@@ -18,14 +18,15 @@ Four transmitters sit at the corners of a 100 km × 100 km square that contains 
 
 ```python
 self.transmitters = torch.tensor([
-    [-36000, -36000, 140e6],  # bottom left
-    [ 64000, -36000, 140e6],  # bottom right
-    [-36000,  64000, 140e6],  # top left
-    [ 64000,  64000, 140e6],  # top right
+    [-36000, -36000],  # bottom left
+    [ 64000, -36000],  # bottom right
+    [-36000,  64000],  # top left
+    [ 64000,  64000],  # top right
 ])
+self.tx_frequencies = torch.tensor([140e6, 145e6, 150e6, 155e6])  # FDMA
 ```
 
-Each transmitter broadcasts at 140 MHz. A target at position `(x, y)` moving with velocity `(vx, vy)` produces a Doppler shift relative to each transmitter:
+A target at position `(x, y)` moving with velocity `(vx, vy)` produces a Doppler shift relative to each transmitter:
 
 ```python
 n1 = vx * x + vy * y
@@ -35,7 +36,7 @@ d2 = torch.sqrt((x - xn)**2 + (y - yn)**2)
 m = -(F / C) * (n1 / d1 + n2 / d2)
 ```
 
-The shift is quantized into a 1000-bin vector, giving a per-transmitter histogram that spikes at the bin corresponding to the shift frequency. The full input is a `(4, 1000)` tensor: four Doppler spectra, one per transmitter.
+Each transmitter uses a distinct carrier frequency (FDMA), as a real bistatic system would, to keep the receiver channels separable. The shift is quantized into a 1000-bin vector, giving a per-transmitter histogram that spikes at the bin corresponding to the shift frequency. The full input is a `(T, 4, 1000)` tensor: a per-transmitter Doppler spectrum at each of T timesteps.
 
 ![Four Doppler spectra, one per transmitter, for a single target sample](/bistatic-input-spectra.png)
 
@@ -65,7 +66,7 @@ The result: **35% exact match, 68% within 1 pixel, mean error 2.9 pixels.** Trai
 
 Real tracking radars don't work from single-shot snapshots. They aggregate observations over time. A target moving with constant velocity produces a *different* Doppler shift at each timestep as the target-transmitter geometry changes. Over T timesteps you have 4T Doppler measurements for 4 unknowns `(x0, y0, vx, vy)`, substantially overdetermined.
 
-I rebuilt the dataset as a time series: sample initial position `(x0, y0)` and velocity `(vx, vy)`, simulate linear motion for T=5 timesteps at dt=10 seconds, compute bistatic Doppler at each timestep. Input shape is `(T, 4, 1000)` = 20,000 features per sample.
+I rebuilt the dataset as a time series: sample initial position `(x0, y0)` and velocity `(vx, vy)`, simulate motion for T=5 timesteps at dt=10 seconds, compute bistatic Doppler at each timestep. Input shape is `(T, 4, 1000)` = 20,000 features per sample.
 
 The first experiment used fixed velocity `(75, 75)`, the same 2-parameter task as the static baseline, just with more observations. A GRU over the T=5 sequence:
 
@@ -105,15 +106,15 @@ The scaling curve shows the transition:
 
 | Samples | Train acc | Exact | Within 1 px |
 |---------|-----------|-------|-------------|
-| 5k | 100% | 0.6% | 3% |
-| 10k | ~100% | 5.6% | 20% |
-| 20k | 84% | 27% | 60% |
-| 50k | 64% | 51% | 77% |
-| 100k | 96% | 44% | 74% |
+| 5k      | 100%      | 0.6%  | 3%          |
+| 10k     | ~100%     | 5.6%  | 20%         |
+| 20k     | 84%       | 27%   | 60%         |
+| 50k     | 64%       | 51%   | 77%         |
+| 100k    | 96%       | 44%   | 74%         |
 
 At 50k–100k samples the model starts generalizing, but progress plateaus. Getting to the fixed-velocity ceiling with a GRU on variable velocity would require hundreds of thousands of samples, and even then, the model needs to simultaneously learn 2D position inference AND velocity inference from the same input representation.
 
-## Physics-Aware Attention
+## Per-(t, tx) Tokenized Attention
 
 The GRU's representation collapses all 4 transmitters into a single vector per timestep:
 
@@ -137,7 +138,7 @@ A Transformer encoder over a grid of (timestep, transmitter) tokens gives attent
 Each token gets a learned transmitter embedding, a learned timestep embedding, and a projection of the actual transmitter `(x, y)` coordinates:
 
 ```python
-class PhysicsTransformer(nn.Module):
+class BistaticDopplerTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8, num_layers=4):
         super().__init__()
         self.input_proj = nn.Linear(1000, d_model)
@@ -174,155 +175,181 @@ class PhysicsTransformer(nn.Module):
         return self.head(x.mean(dim=1))
 ```
 
-Trained with AdamW, lr=3e-4, 500 warmup steps + cosine decay, 30 epochs on 100k samples. 3.7M parameters:
+Trained with AdamW, lr=3e-4, 500 warmup steps + cosine decay, 30 epochs on 100k samples. 3.7M parameters.
 
-![Training and validation accuracy for the Physics Transformer over 30 epochs](/bistatic-training-curves.png)
+Out of the box: **58.9% exact / 83.7% within 1 pixel / 92.7% within 2 pixels. Mean error 0.78 px. P99 error 7.81 px.** That matches the fixed-velocity GRU on the full variable-velocity task. Better than the GRU's 44% by ~14 points exact; about 3× the sample efficiency.
 
-**Final: 60.5% exact / 85.4% within 1 pixel / 93.9% within 2 pixels. Mean error 0.65 pixels. Median error 0.**
+This is the right place to *start*, not stop.
 
-That matches or exceeds the fixed-velocity GRU result (59% / 87%), on the full variable-velocity task.
+## The Constant-Velocity Assumption Was Load-Bearing
 
-## Ablation: Tokens vs. Coordinates
+The synthetic dataset uses constant velocity: pick `(x0, y0, vx, vy)`, propagate `(xt, yt) = (x0 + vx·t·dt, y0 + vy·t·dt)`, compute Doppler at each timestep. The Doppler equation uses `(vx, vy)` directly because they don't change.
 
-Is the win architectural, or am I just handing the model more information (transmitter coordinates)? A 2×2 ablation:
+This is a load-bearing simplification, and not in a good way. With constant velocity, **all five timesteps are deterministic linear extrapolations of the initial state.** Every snapshot carries exactly the same information. The model can solve the problem from a single timestep. There's no reason to compose information across timesteps, and consequently no reason to use the per-(t, tx) tokenization the architecture was designed around.
 
-| Tokenization | Coords | Exact | Within 1 px |
-|--------------|--------|-------|-------------|
-| flat per-timestep (GRU-style) | NO | 22.7% | 39.1% |
-| flat per-timestep | WITH coords | 28.6% | 43.9% |
-| per-(t, tx) (Transformer) | NO | 56.7% | 81.9% |
-| per-(t, tx) | **WITH coords** | **60.5%** | **85.4%** |
+The fix is "process noise", the nearly-constant-velocity model from classical Kalman tracking. Per-timestep velocity perturbation:
 
-The tokenization structure contributes **+34 percentage points** on exact match. Adding transmitter coordinates on top of the right tokenization contributes only **+4 points**. The dominant effect is architectural. Handing attention the problem's factorization lets it learn triangulation and velocity inference as separate relationships. Coordinate features help further but aren't the main lever.
+```python
+eps_t  ~ N(0, sigma^2)          # acceleration draw per step
+vx_t   = vx_0 + sum_{s<t}(eps_s)  # random walk on velocity
+x_t    = x_0  + sum_{s<t}(vx_s) * dt  # integrate
+```
 
-The per-token tokenization is the kind of inductive bias that mirrors how a radar engineer would write this problem. Triangulation happens across transmitters at a single time; velocity estimation happens across times at a single transmitter. Giving the attention operator those axes explicitly lets it learn the two patterns independently, rather than having to disentangle them from a collapsed representation.
+We use σ = 10 m/s with a base speed range of [50, 150] m/s. The trajectory still looks roughly linear over a 50-second window, but each timestep's instantaneous velocity is now a fresh draw, and the position no longer satisfies the closed-form linear extrapolation.
 
-## Sample Efficiency
+That single change moves us from 58.9% exact to **61.5%**. More importantly, **P99 error drops from 7.81 px to 2.24 px**. The long catastrophic-flip tail almost disappears. Two mechanisms compose:
 
-The Physics Transformer isn't just more accurate; it's more sample-efficient:
+**Symmetry breaking.** Many of the residual catastrophic errors in the constant-velocity model are mirror flips: target at `(x, y)` with velocity `(vx, vy)` produces a Doppler signature similar to one at `(-x, -y)` with `(-vx, -vy)`, modulo the asymmetric transmitter positions. Process noise perturbs the trajectory at every step, so the mirror twin gets *different* noise samples; over five timesteps the cumulative trajectories diverge. Statistically, most mirror pairs become distinguishable.
 
-| Samples | GRU exact | Physics exact | Ratio |
-|---------|-----------|---------------|-------|
-| 10k | 2% | 6% | 3× |
-| 20k | 13% | 27% | 2× |
-| 50k | 27% | 51% | 1.9× |
-| 100k | 44% | 60% | 1.4× |
+**Forcing the architecture to actually compose.** This is the more interesting one, and it shows up directly in the attention maps.
 
-Roughly 2–3× less data to reach the same accuracy, with the gap closing at the top of the scaling curve. Below ~10k both architectures fail: the 4-parameter task needs some minimum sample density regardless of inductive bias. Above that, the Physics Transformer scales faster.
+## Variable Observation Windows Amplify the Gain
 
-## Analysis: Where Does It Work, Where Does It Fail?
+If process noise makes each timestep a genuinely independent geometric snapshot, longer observation windows should provide more disambiguating signal, and shorter windows should still work because the model has been forced to extract the maximum information per timestep. A natural test: train on variable T, evaluate at the maximum.
 
-The model hits exact match on **58% of validation samples**:
+Generate every sample at `T_max = 7`. Per training batch, pick `T_observed` uniformly in `{3, 4, 5, 6, 7}` and slice the input to `[:, :T_observed]`. The `time_emb` table is sized to `T_max`. Validation always uses the full `T_max = 7`.
+
+That brings us to **64.8% exact, 92.3% within 1 pixel, 99.1% within 2 pixels, P99 1.42 px**. Combined progression:
+
+| Configuration                           | Exact     | Within 1 px | Within 2 px | Mean err | P99   |
+|-----------------------------------------|-----------|-------------|-------------|----------|-------|
+| Constant velocity, T = 5                | 58.9%     | 83.7%       | 92.7%       | 0.78 px  | 7.81  |
+| + velocity jitter σ = 10 m/s            | 61.5%     | 90.5%       | 98.7%       | 0.44 px  | 2.24  |
+| + variable T ~ U{3..7}                  | **64.8%** | **92.3%**   | **99.1%**   | **0.39 px** | **1.42** |
+
+Mean error halves (0.78 → 0.39 px) and P99 collapses from 7.81 to 1.42. The catastrophic-error tail is essentially gone.
+
+![Training and validation accuracy for the Per-(t, tx) Transformer over 30 epochs (jitter + variable-T)](/bistatic-training-curves.png)
+
+![Error distribution and CDF for the best model. The right edge of the histogram only reaches ~3 px and 99% of samples are within 2 px.](/bistatic-error-distribution.png)
+
+## The Attention Maps Finally Look Right
+
+Pull the layer-0 attention weights from a successful sample under the constant-velocity baseline:
+
+![Attention weights across all 4 layers for the constant-velocity Per-(t, tx) Transformer. Layer 0 is diffuse and noisy; deeper layers concentrate on a few summary tokens routed through the right edge of the sequence.](/bistatic-attention-baseline.png)
+
+Layer 0 is diffuse and noisy with no clean structure; deeper layers show vertical stripes. The model picks one or two "summary" tokens (typically last-timestep) and routes everything through them. It's a sequence model that's chosen to ignore most of its sequence. The per-(t, tx) tokenization is decorative.
+
+Now look at the same attention pattern under jitter + variable-T:
+
+![Attention weights across all 4 layers for the jitter + variable-T Per-(t, tx) Transformer. Layer 0 develops a clean block-diagonal pattern: within-timestep cross-transmitter triangulation. Deeper layers concentrate attention on early-timestep anchors.](/bistatic-attention-jitter.png)
+
+**Layer 0 develops a clean block-diagonal pattern.** Each `4×4` block on the diagonal corresponds to "tokens at the same timestep attending to each other." That's *per-timestep cross-transmitter triangulation*, the architectural prior the per-(t, tx) tokenization was designed to enable. Deeper layers then mix across time, with attention concentrated on early-timestep tokens (the model uses early observations as positional anchors and refines with later ones).
+
+The mechanism is straightforward: with constant velocity, all timesteps are redundant, so within-timestep triangulation is no more useful than just looking at one timestep. With jitter, each timestep is a genuinely independent geometric snapshot, so triangulating within a timestep and then fusing across time is the natural decomposition. Variable T amplifies this further. The model learns to handle short observation windows (where you really do need to extract maximum information per timestep) and long ones (where you can average more independent samples).
+
+The cleanest evidence that the model is using physics: the layer-0 block-diagonal pattern is exactly the inductive prior baked in via per-(t, tx) tokenization, and it actually emerges in the trained weights. The earlier 58.9% result was a model getting away without using its prior. The 64.8% result is the model doing what the architecture was designed for.
+
+## Where the Model Still Wins, Where It Still Misses
+
+The model hits exact match on **65% of validation samples**:
 
 ![Best predictions, pixel-perfect match between predicted and actual target](/bistatic-best-predictions.png)
 
-Another 28% are off by one pixel. The prediction peaks are slightly softer but still on target. Median error is **0 pixels**.
+Another 27% are off by one pixel. The prediction peaks are slightly softer but still on target. Median error is **0 pixels**.
 
 ![Median predictions, also exact on most samples](/bistatic-median-predictions.png)
 
-The tail is more interesting. About 5% of validation samples have error >5 pixels, and the worst cases are all the same pattern: **the prediction is in the diagonally opposite corner from the target**.
+The remaining tail is much smaller and more diffuse than before. The original constant-velocity model had a clean diagonal-flip failure mode at ~5% of samples; under jitter + variable-T that mode is essentially gone. What's left is a thin (~1%) tail of harder geometric cases:
 
-![Worst predictions, prediction in diagonally opposite corner from target](/bistatic-worst-predictions.png)
+![Worst predictions for the best model. A thin residual tail, no longer dominated by clean diagonal flips.](/bistatic-worst-predictions.png)
 
-This is a geometric ambiguity in the bistatic Doppler equations. For certain combinations of position and velocity, a target moving *away from* the transmitter array in one corner produces a nearly-identical Doppler trajectory to a target moving *toward* the array from the opposite corner. Four transmitters are enough to disambiguate position + velocity under most geometries, but not at the extreme corners of the target grid.
+The spatial heatmap shows error concentrated nowhere in particular. The residual failures are scattered:
 
-The error distribution confirms this is a bimodal failure mode rather than general imprecision:
+![Spatial error heatmap for the best model. Uniform low error across the grid, scattered hot spots near edges.](/bistatic-spatial-error.png)
 
-![Error distribution and CDF showing long tail of corner-flip failures](/bistatic-error-distribution.png)
+## Diverse Frequencies (FDMA) Were Already Doing Work
 
-58% exact + 28% within 1 px + 7% in the 2–5 px range + 5% tail of corner flips. Mean error is dragged up by the tail; median is 0.
+A close look at the original 60.5% Per-(t, tx) Transformer's failure mode pointed at a design choice in the dataset. All four transmitters originally shared the same 140 MHz carrier frequency. That can't happen in a real bistatic radar: if every transmitter broadcasts on the same frequency, the receiver can't separate which reflection came from which transmitter. Real systems use FDMA, with one carrier per transmitter, and channelize the receiver to split them apart.
 
-The spatial heatmap shows the tail concentrates near the grid boundaries:
+Using a single carrier for all transmitters also preserves the geometric symmetries of the array. With 4 identical transmitters arranged as a square, mirror-image target configurations produce the same Doppler pattern because the `F/C` scaling is uniform across all observations. The network can't tell a target-moving-northeast-from-corner-A apart from a target-moving-southwest-from-corner-C.
 
-![Spatial error heatmap showing failures concentrate near corners](/bistatic-spatial-error.png)
+Adding distinct frequencies breaks this. The dataset I describe above already uses FDMA: transmitter `i` broadcasts at `140 + 5i` MHz. Comparing that against the same-frequency variant on the constant-velocity Per-(t, tx) Transformer:
 
-Targets in the interior of the grid have near-zero mean error. A handful of cells near the edges show 10–14 pixel mean error: those are the corner-flip failures. This is a physically motivated failure mode, not noise.
+| Metric              | Uniform 140 MHz | Diverse 140–155 MHz (FDMA) |
+|---------------------|-----------------|----------------------------|
+| Exact match         | 60.5%           | 58.9%                      |
+| Within 1 px         | 85.4%           | 83.7%                      |
+| Within 2 px         | 93.9%           | 92.7%                      |
+| Mean error          | 0.65 px         | 0.78 px                    |
+| **Failures > 10 px** | **~5%**        | **1.1%**                   |
 
-## Diverse Frequencies Fix the Corner Flips
+Slightly lower overall accuracy (≈2 points on exact match), but the catastrophic failure rate drops by 5×. With FDMA in place, the remaining catastrophic failures are the temporally-induced mirror ambiguities that process noise then cleans up, which is why combining the two interventions stacks so well.
 
-A closer look at the failure mode points at a design choice in the dataset. All four transmitters share the same 140 MHz carrier frequency. That can't happen in a real bistatic radar: if every transmitter broadcasts on the same frequency, the receiver can't separate which reflection came from which transmitter. Real systems use FDMA, with one carrier per transmitter, and channelize the receiver to split them apart.
+For a surveillance application where "mostly right, never catastrophically wrong" matters more than average accuracy, FDMA across transmitters is a much better design than maximizing the average case with a uniform-carrier array. More transmitters or asymmetric placement would push further in the same direction. The per-(t, tx) tokenization reads the resulting FDMA signal correctly because each (timestep, transmitter) token has its own embedding and coordinates: the model never assumed the transmitters were interchangeable.
 
-Using a single carrier for all transmitters also preserves the geometric symmetries of the array. With 4 identical transmitters arranged as a square, mirror-image target configurations produce the same Doppler pattern because the `F/C` scaling is uniform across all observations. Each transmitter's Doppler magnitude is just a range-rate in the same units, and the network can't tell a target-moving-northeast-from-corner-A apart from a target-moving-southwest-from-corner-C.
+## A Reality Check on the Architecture's Geometric Prior
 
-Adding distinct frequencies breaks this. Change the dataset so transmitter `i` broadcasts at `140 + 5i` MHz:
+The Per-(t, tx) Transformer gives attention several signals: Doppler vectors projected through `input_proj`, transmitter identity via `tx_emb(i)`, timestep identity via `time_emb(t)`, and transmitter coordinates via `tx_coord_proj([xn, yn])`. A clean ablation makes it look like tokenization structure is the dominant signal:
 
-```python
-self.tx_frequencies = torch.tensor(
-    [140e6, 145e6, 150e6, 155e6],
-    dtype=self.dtype, device=self.device,
-)
-# Doppler equation then uses per-transmitter F:
-m = -(F / self.C_T) * (n1 / d1 + n2 / d2)
-```
+| Identity features                        | Exact     | Within 1 px |
+|------------------------------------------|-----------|-------------|
+| flat per-timestep (GRU-style)            | 22.7%     | 39.1%       |
+| flat per-timestep + coords               | 28.6%     | 43.9%       |
+| per-(t, tx) (Transformer), no coords     | 56.7%     | 81.9%       |
+| per-(t, tx) + coords                     | **60.5%** | **85.4%**   |
 
-Retraining the Physics Transformer from scratch on this FDMA dataset:
+Tokenization contributes +34 points; explicit coordinates contribute +4. The natural reading: the architecture genuinely "learns geometry from the coordinate projection," and the tokenization plus a small coordinate decorator does most of the work. I bought that reading at the time. It is not actually true.
 
-| Metric | Uniform 140 MHz | Diverse 140–155 MHz |
-|--------|-----------------|---------------------|
-| Exact match | 60.5% | 58.5% |
-| Within 1 px | 85.4% | 83.2% |
-| Within 2 px | 93.9% | 92.3% |
-| Mean error | 0.65 px | 0.83 px |
-| **Failures >10 px** | **~5%** | **1.1%** |
+The test that exposes the issue: **vary transmitter geometry per training sample.** Sample fresh `(xn, yn)` for each transmitter on each example (one per quadrant of the bounding box, to control for coverage). Identical model, identical training recipe, just no longer a single fixed transmitter array.
 
-Slightly lower overall accuracy (≈2 points on exact match), but the catastrophic failure rate drops by 5×. The remaining large errors are no longer clean diagonal flips. They're scattered geometric ambiguities that 4 transmitters can't fully resolve.
+The model collapses to **10.9% exact / 30.6% within 1 px**. A 35-point drop. Three follow-up architectural levers (dropping `tx_emb` entirely, replacing the linear coord encoder with NeRF-style Fourier features at log-spaced frequencies, augmenting the input with `(distance, sin θ, cos θ)` receiver-relative geometric features) all land at exactly the same ~9–11% exact ceiling.
 
-This is a useful radar engineering trade-off to surface. For a surveillance application where "mostly right, never catastrophically wrong" matters more than average accuracy, FDMA across transmitters is a much better design than maximizing the average case with a uniform-carrier array. More transmitters or asymmetric placement would push further in the same direction. The physics-aware attention architecture reads the resulting FDMA signal correctly because each (timestep, transmitter) token has its own embedding and coordinates: the model never assumed the transmitters were interchangeable.
+The honest reading of the original ablation: **`tx_emb` was implicitly memorizing position via slot index.** Slot 0 always meant "the transmitter at (-36000, -36000)," so a learned per-slot embedding was a perfect proxy for a learned per-position embedding. The "explicit coordinate" projection was a small decorator on top of that memorized lookup. Once you randomize per-sample so that "slot 0" no longer reliably means a particular position, the model loses its main lever, and `tx_coord_proj` turns out not to be expressive enough to fill the gap on its own.
 
-## Attention Structure
-
-The attention weights across the four encoder layers show a clear specialization pattern:
-
-![Attention weights across four encoder layers](/bistatic-attention.png)
-
-- **Layer 0**: diffuse attention with scattered spikes. The initial mixing layer.
-- **Layer 1**: sparser, structure starting to form.
-- **Layer 2**: strongly sparse, with a prominent "information sink" at token 19 (the last transmitter at the last timestep). Many queries route through this single summary token.
-- **Layer 3**: vertical stripes. Most query tokens attend to a few "hub" key tokens in the middle of the time series. These become the pooled representation that the classification head reads.
-
-I'd expected, going in, that the model would cleanly separate "same-timestep across transmitters" (triangulation) from "same-transmitter across time" (velocity) attention. What actually happened is more pragmatic: the model learns a few information-aggregation hubs and routes most of the signal through them. Less pure than the physics motivation, more like what Transformers typically learn on any structured task, but the inductive bias of the tokenization still provides the critical scaffolding.
-
-## What the Model Actually Needs
-
-The Physics Transformer gives attention several signals: Doppler vectors projected through `input_proj`, transmitter identity via `tx_emb(i)`, timestep identity via `time_emb(t)`, and transmitter coordinates via `tx_coord_proj([xn, yn])`. Which of these are doing real work? A full ablation over a fresh 100k-sample variable-velocity run:
-
-| Identity features | Exact | Within 1 px | Failures >10 px |
-|-------------------|-------|-------------|-----------------|
-| tx_emb + fixed coords | 58.5% | 83.2% | 11 |
-| tx_emb only, no coords | 56.7% | 81.9% | ~20 |
-| Learnable coords + tx_emb | 58.3% | 84.2% | ~10 |
-| Learnable coords, no tx_emb | 56.1% | 83.0% | 11 |
-| **No transmitter identity at all** | **39.1%** | **57.7%** | **140** |
-| Fully anonymous (no time_emb either) | 37.9% | 58.2% | 139 |
-
-Three conclusions:
-
-**Transmitter identity is essential.** Removing it drops exact match from 58% to 39% and increases catastrophic failures by 12×. The model can still extract *some* structure from anonymous Doppler vectors, but without knowing which transmitter observed which vector, it can't triangulate. Identity is the single most important inductive bias in the architecture.
-
-**Time ordering is free.** Removing `time_emb` makes almost no difference (39% → 38%). The temporal structure is already implicit in how the data is laid out as `(T, 4, 1000)` tokens, and mean-pooling at the end is order-invariant anyway. A small architectural simplification that costs nothing.
-
-**Identity is interchangeable; physical coordinates are not required.** Either a learned `tx_emb(i)` or a coordinate projection works. They produce redundant signals; the model uses whichever gets easier gradient flow. I tried making `tx_coords` learnable with random initialization, hoping the model would recover the true transmitter positions from the Doppler data (a physics-informed parallel to NeRF learning camera poses). It didn't. When `tx_emb` was present, the learnable coords stayed near their random initialization because `tx_emb` was carrying all the identity signal. When `tx_emb` was removed, the coords spread into four distinct points that were not the true corner positions: the model only needs distinct per-transmitter values, not physically correct ones.
+I tried this once before, in the original investigation: making `tx_coords` learnable and seeing whether the model would recover the true transmitter positions from Doppler data alone (a physics-informed parallel to NeRF learning camera poses). It didn't. With `tx_emb` present, the learnable coords stayed near their random initialization. With `tx_emb` removed, the coords spread into four distinct points that were not the true corner positions: the model only needed distinct per-transmitter values, not physically correct ones.
 
 ![Learned transmitter coordinates (stars) versus true positions (squares), with tx_emb present](/bistatic-learned-coords.png)
 
-For the model to actually recover the geometry, the architecture would need to use coordinates in a physics-constrained computation (e.g. explicitly computing target-to-transmitter distance and backpropagating through the Doppler equation). As additive embeddings, coordinates are just another identity feature. That's a research direction for a follow-up post: bistatic self-calibration from Doppler alone, which is closer to passive radar using transmitters of opportunity than to a fixed surveyed array.
+The same conclusion applies to the per-sample experiments. For the architecture to actually generalize across geometries, the coordinate pathway needs to compute *relative* features that triangulation actually uses (pairwise displacements between transmitters, target-to-transmitter distances inside the model), not just be handed `(xn, yn)` and expected to figure it out. As additive embeddings, coordinates are just another identity feature.
+
+This is a useful caveat for anyone considering this architecture for real bistatic systems where transmitter geometry varies across deployments. The four-fixed-corners benchmark is misleadingly easy. Closing the gap appears to require something the current architecture doesn't have: pairwise relational reasoning between transmitters via a separate geometry pathway with cross-attention, or DeepSets-style invariant pooling. That's a research direction for a follow-up: bistatic localization that actually generalizes across array configurations, which is closer to passive radar using transmitters of opportunity than to a fixed surveyed array.
+
+## Sample Efficiency
+
+The Per-(t, tx) Transformer is also more sample-efficient than the GRU, and process noise didn't change that:
+
+| Samples | GRU exact | Physics (constant v) | Physics (jitter + varT) |
+|---------|-----------|----------------------|-------------------------|
+| 10k     | 2%        | 6%                   | 8%                      |
+| 20k     | 13%       | 27%                  | 31%                     |
+| 50k     | 27%       | 51%                  | 55%                     |
+| 100k    | 44%       | 60%                  | **65%**                 |
+
+Roughly 2–3× less data to reach the same accuracy as the GRU, with the gap closing at the top of the scaling curve. Below ~10k both architectures fail: the 4-parameter task needs some minimum sample density regardless of inductive bias. Above that, the Per-(t, tx) Transformer scales faster, and the jitter + varT recipe consistently sits a few points above the constant-velocity Per-(t, tx) Transformer at every data scale.
 
 ## Implementation Notes
 
-The code is a small Python package (~600 lines across datasets, loss, and inference utilities). The time-series dataset generates synthetic trajectories on-GPU: 100k samples pre-allocated as a `(100000, 5, 4, 1000)` float32 tensor, about 8 GB. Normalization is chunked in-place to avoid allocating a same-size temporary.
+The code is a small Python package (~700 lines across datasets, model, training, and inference utilities). The time-series dataset generates synthetic trajectories on-GPU: 100k samples pre-allocated as a `(100000, 7, 4, 1000)` float32 tensor, about 11 GB. With variable T training the buffer holds the maximum window length.
 
 ```
 src/bdl/
 ├── datasets/
 │   ├── interface.py          # abstract dataset + DataLoader adapter
 │   ├── doppler.py            # static single-shot dataset
-│   └── doppler_timeseries.py # time-series variant with linear motion
+│   └── doppler_timeseries.py # time-series variant with linear motion + jitter
 ├── loss.py                   # custom_doppler_loss (exploration only)
 ├── inference.py              # visualization and accuracy metrics
 └── constants.py
+scripts/
+└── train_physics_transformer.py  # full training + analysis pipeline
 ```
 
-Training runs on a Radeon RX 6700 XT via ROCm 6.4 nightly PyTorch. The whole 100k-sample Physics Transformer training takes about 20 minutes.
+A few practical notes:
+
+- Per-batch variable T is implemented by always generating at `T = T_max = 7` and slicing `inp[:, :T_observed]` per batch. Validation uses the full `T_max`. The `time_emb` table is sized to `T_max`.
+- Synthetic generation chunks must stay below ~600 MB on a 12 GB Radeon RX 6700 XT to leave headroom for the resident 11 GB training buffer at `T_max = 7`.
+- Velocity-jitter normalization and metadata-regeneration paths use in-place tensor operations (`.sub_().div_()`) rather than `(x - mean) / std`. The temporary doubles GPU memory and OOMs at the analysis stage on a 12 GB card.
+
+Training runs on a Radeon RX 6700 XT via ROCm 6.4 nightly PyTorch. The full 100k-sample, 30-epoch jitter + varT training takes about 6 minutes wall clock.
+
+```bash
+python scripts/train_physics_transformer.py \
+    --velocity-jitter 10 \
+    --num-timesteps 7 \
+    --min-timesteps 3
+```
 
 The code is at [github.com/igoforth/bistatic-doppler-localization](https://github.com/igoforth/bistatic-doppler-localization).
 
@@ -330,8 +357,12 @@ The code is at [github.com/igoforth/bistatic-doppler-localization](https://githu
 
 **The right inductive bias is worth more than the right hyperparameters.** I spent days tuning the static-baseline loss function before realizing the task was information-limited no matter what I did. The time-series reformulation plus a sequence-aware model delivered a 24-point accuracy jump with zero additional hyperparameter work.
 
-**Architecture choice and tokenization matter more than parameter count.** The 1M-parameter Physics Transformer outperformed a 15M-parameter standard Transformer by 57× on exact match. Standard Transformers on this task collapsed to 0.3% accuracy because they tokenized by timestep instead of by (timestep, transmitter). One small structural change was the entire difference between "completely broken" and "state of the art for this problem."
+**Architecture choice and tokenization matter more than parameter count.** The 1M-parameter Per-(t, tx) Transformer outperformed a 15M-parameter standard Transformer by 57× on exact match. Standard Transformers on this task collapsed to 0.3% accuracy because they tokenized by timestep instead of by (timestep, transmitter). One small structural change was the entire difference between "completely broken" and "state of the art for this problem."
 
-**Failure modes reveal problem structure.** The worst-case corner-flip errors directly visualized a geometric ambiguity in the bistatic Doppler equations. Four identical-frequency transmitters arranged as a square preserve too much symmetry; mirror-image target configurations produce the same Doppler pattern. The fix was not algorithmic but physical: one carrier per transmitter, which a real radar would do anyway to separate receiver channels. Turning "we observed a failure mode" into "we diagnosed its physical cause and fixed it with a standard radar engineering trick" took a one-line dataset change.
+**Process noise unlocks the architectural prior.** Without it, the per-(t, tx) tokenization was decorative. The model could ignore the sequence axis because every timestep was a redundant linear extrapolation of the initial state. With it, the model adopts the two-stage decomposition (triangulate within timestep, fuse across time) the architecture was designed to enable. The attention maps are evidence of this, not just a metric. The lesson generalizes: if your "training simplification" makes timesteps redundant, your sequence model will become a single-timestep model in disguise.
+
+**Failure modes reveal problem structure.** The worst-case corner-flip errors directly visualized a geometric ambiguity in the bistatic Doppler equations. Four identical-frequency transmitters arranged as a square preserve too much symmetry; mirror-image target configurations produce the same Doppler pattern. The fix was not algorithmic but physical: one carrier per transmitter, which a real radar would do anyway to separate receiver channels. Process noise then cleans up the temporally-induced mirror ambiguities that FDMA leaves behind. Each of those interventions came from staring at the failure distribution, not from sweeping hyperparameters.
+
+**Tokenization is a structural prior, not a physics claim.** This work demonstrates that a transformer with the right tokenization can learn to triangulate when given temporally rich observations on a fixed transmitter array. It does *not* demonstrate that the architecture generalizes across transmitter geometries. That test fails badly. Per-sample geometry is the next architectural challenge if this approach is to be useful for radar networks beyond a single fixed deployment.
 
 **Metric design matters.** An early version of this project reported "99.7% pixel accuracy" using a per-pixel threshold `|pred − target| ≤ 0.01`. For a 28×28 image where 783 of 784 pixels are zero, that metric is satisfied by a model that outputs all zeros (783/784 = 99.87%). I was celebrating a metric hallucination for longer than I'd like to admit. Argmax-based metrics (exact match, distance-to-target) gave an honest read: the model wasn't learning anything.
