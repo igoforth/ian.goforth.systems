@@ -215,7 +215,7 @@ That brings us to **64.8% exact, 92.3% within 1 pixel, 99.1% within 2 pixels, P9
 |-----------------------------------------|-----------|-------------|-------------|----------|-------|
 | Constant velocity, T = 5                | 58.9%     | 83.7%       | 92.7%       | 0.78 px  | 7.81  |
 | + velocity jitter σ = 10 m/s            | 61.5%     | 90.5%       | 98.7%       | 0.44 px  | 2.24  |
-| + variable T ~ U{3..7}                  | **64.8%** | **92.3%**   | **99.1%**   | **0.39 px** | **1.42** |
+| + variable T ~ `U{3..7}`                | **64.8%** | **92.3%**   | **99.1%**   | **0.39 px** | **1.42** |
 
 Mean error halves (0.78 → 0.39 px) and P99 collapses from 7.81 to 1.42. The catastrophic-error tail is essentially gone.
 
