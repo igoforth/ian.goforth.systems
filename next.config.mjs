@@ -34,6 +34,14 @@ const nextConfig = {
       config.output.trustedTypes = { policyName: "nextjs#bundler" };
     return config;
   },
+  async rewrites() {
+    return [
+      {
+        source: "/blog/:slug.md",
+        destination: "/blog/:slug/raw",
+      },
+    ];
+  },
 };
 
 export default nextConfig;

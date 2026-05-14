@@ -2,6 +2,7 @@
 title: "Bistatic Doppler Localization with Tokenized Attention"
 description: "Four transmitters, a moving target, and an inverse problem. The static formulation hits a 35% ceiling. Temporal observations break through for fixed velocity. Variable velocity needs something more: a Transformer that tokens by (timestep, transmitter), and process noise on the trajectory to actually wake up its inductive bias. End result: 65% exact / 92% within one pixel / 99% within two pixels, P99 error 1.4 pixels."
 pubDate: "Apr 22 2026"
+heroImage: "/bistatic-attention.png"
 ---
 
 ## Introduction

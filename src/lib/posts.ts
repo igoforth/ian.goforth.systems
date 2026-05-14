@@ -54,6 +54,11 @@ export function getPostBySlug(slug: string) {
   };
 }
 
+export function getRawPostBySlug(slug: string): string {
+  const filePath = path.join(postsDirectory, `${slug}.md`);
+  return fs.readFileSync(filePath, "utf-8");
+}
+
 export function getAllSlugs(): string[] {
   return fs
     .readdirSync(postsDirectory)

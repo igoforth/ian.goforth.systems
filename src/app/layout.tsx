@@ -28,7 +28,16 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
     images: ["/placeholder-social.jpg"],
   },
-  icons: { icon: "/astro.svg" },
+  icons: {
+    icon: [
+      { url: "/icon-light.svg", href: "/icon-light.svg" },
+      {
+        media: "(prefers-color-scheme: dark)",
+        url: "/icon-dark.svg",
+        href: "/icon-dark.svg",
+      },
+    ],
+  },
   other: { "cf-2fa-verify": "ZgvmYR9oRtPxieJWHe0p" },
 };
 
